@@ -35,6 +35,28 @@ numbers below are the ones shown in **Settings → Software Update**.
 
 ---
 
+## 0.9.81 — 13 September 2026
+
+### Fixed — times that didn't follow Planning Center
+
+Reported on a Sunday morning as "times from Planning Center are not accurate".
+The Keys to the Stage countdown was right to the second; two other times
+weren't, for two different reasons:
+
+- **Service Countdown** never read Planning Center at all — it counted to a
+  time typed by hand, fixed all morning and blank on a new kiosk. It now follows
+  the plan's service times automatically: *ON AIR IN* until the next service
+  starts, *ON AIR +* while it runs, then the next one. A typed time still
+  overrides if you want it.
+- **Show Flow's start times** were calculated from whichever service time was
+  *selected*. With several services and auto-advance off, the 9:30 and 11:00
+  showed the 8:00's times all morning. It now prints the service that's
+  happening now, or the next one.
+
+Call times and rehearsals are never counted to — only services.
+
+---
+
 ## 0.9.80 — 10 September 2026
 
 ### Fixed — "my dashboard reverted when I left it"
