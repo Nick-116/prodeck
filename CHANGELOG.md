@@ -35,6 +35,16 @@ numbers below are the ones shown in **Settings → Software Update**.
 
 ---
 
+## 0.9.83 — 13 September 2026
+
+### Fixed — slide preview blank on a kiosk
+
+The Slide Preview widget on a screen signed in with the crew password could
+read the slide but not fetch its picture, so the tile stayed empty. Slide
+pictures are a viewer's read; they are now allowed.
+
+---
+
 ## 0.9.82 — 13 September 2026
 
 ### Fixed — plan times now match Planning Center exactly
