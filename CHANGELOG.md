@@ -35,6 +35,29 @@ numbers below are the ones shown in **Settings → Software Update**.
 
 ---
 
+## 0.9.82 — 13 September 2026
+
+### Fixed — plan times now match Planning Center exactly
+
+Planning Center anchors a plan on the **service start**: items marked
+pre-service — rehearsal, pre-service slides, the countdown video — count
+*backwards* from it, so the first song is at 8:00. ProDeck was stacking
+everything forward from 8:00, putting a 45-minute rehearsal at 8:00 and the
+first song at 8:56. Show Flow now lays the plan out the way PCO does, verified
+against a real plan to the second.
+
+### Changed — Keys to the Stage cues off the *service* ending
+
+The call now comes **five minutes before the service is planned to end** —
+the service start plus the items that run during it — rather than before the
+sermon item ends. With services back to back, the end is the hard constraint
+and the sermon is what flexes, so this is when the team needs to be walking
+however long the message ran. It works whether or not anyone is driving PCO
+LIVE. If you'd rather cue off the live item's own countdown, switch it in the
+widget's edit mode.
+
+---
+
 ## 0.9.81 — 13 September 2026
 
 ### Fixed — times that didn't follow Planning Center
