@@ -461,11 +461,13 @@ The account that created the token needs access to **Services**. ProDeck verifie
       "green room widget",
       "when are we on",
     ],
-    body: `The **Keys to the Stage** widget is for a screen where the worship team waits — a green room, the office, wherever breakfast is. It counts down the live item's planned length and, when songs come next, **five minutes before that item is due to end** it turns into a call: *TO THE STAGE*, the countdown, and the next songs with their **keys** in the biggest type on the wall.
+    body: `The **Keys to the Stage** widget is for a screen where the worship team waits — a green room, the office, wherever breakfast is. It counts down to the **end of the service** and, **five minutes before**, turns into a call: *TO THE STAGE*, the countdown, and the closing songs with their **keys** in the biggest type on the wall.
 
-- The classic case is the closing set after the sermon, but it works for any run of songs after any timed item — including the opening set after a pre-service countdown.
-- The start time comes from service tracking, so a screen that comes on mid-sermon still knows where it is. If the start genuinely isn't known, it shows the songs and keys without a countdown rather than guess.
-- If the sermon runs long the call stays up and shows *over by* how much.
+- The service end is Planning Center's start time for the service happening now plus the items that run *during* the service. Pre-service items — a rehearsal, pre-service slides, the countdown video — sit before the start time in PCO and don't push the end out. With back-to-back services that end is the hard constraint and the sermon is what flexes — so the call comes at the right time however long the message ran. It fires off the clock, whether or not anyone is driving PCO LIVE.
+- Re-time or add an item during the morning and the end moves with it.
+- The songs shown are the ones after the live item when those are songs; otherwise the plan's closing set.
+- Prefer a cue off the **live item's own countdown** (the sermon item ending) instead? Switch it in the widget's edit mode — right for a church not running services back to back.
+- If the service runs past its planned end the call stays up and shows *over by* how much.
 - Change the lead time (3, 5, 7 or 10 minutes) in the widget's edit mode.
 
 Pair it with **Service Countdown**, **Show Flow** and **Song Leaders**, and turn on **Room audio** for the dashboard so the room hears the service without a tile. The **Green Room** template is exactly this layout.`,

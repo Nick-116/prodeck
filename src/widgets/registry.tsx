@@ -56,8 +56,9 @@ import {
 } from "../lib/tauri";
 import type { Widget } from "../lib/dashboards";
 import { usePco, fmtLen, type TeamMember , isDeclined } from "../pcoStore";
-import { stageCallState, fmtClock } from "../lib/stageCall";
+import { stageCallState, stageCallServiceState, serviceEndsAt, fmtClock } from "../lib/stageCall";
 import { servicePhase, displayServiceTimeId } from "../lib/serviceClock";
+import { itemStartTimes } from "../lib/planTimes";
 import { useAlerts } from "../alertsStore";
 import { useRelay } from "../relayStore";
 import { Avatar, MicCard } from "../components/PcoBits";
@@ -1059,16 +1060,13 @@ function ShowFlowWidget() {
   // show the first one's start times.
   const shownTimeId = displayServiceTimeId(serviceTimes, selectedServiceTimeId, Date.now());
   const base = serviceTimes.find((t) => t.id === shownTimeId)?.ts ?? 0;
+  // Laid out like PCO: pre-service items (rehearsal, countdown) count backwards
+  // from the service start, so the first song is AT 8:00 — not at 8:56 after
+  // a 45-minute rehearsal stacked in front of it.
   const startAt = new Map<string, string>();
   if (base > 0) {
-    let acc = 0;
-    for (const it of items) {
-      if (it.type === "header") continue;
-      startAt.set(
-        it.id,
-        new Date(base + acc).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
-      );
-      acc += (it.length || 0) * 1000;
+    for (const [id, ts] of itemStartTimes(items, base)) {
+      startAt.set(id, new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
     }
   }
   return (
@@ -2872,15 +2870,28 @@ function StageCallWidget({ widget, update, editing }: WidgetProps) {
   // live_end_at PCO publishes for the current LIVE item — the same clock the
   // LIVE screen shows whoever is driving it. No local start-time guessing, so
   // the booth and a kiosk that just switched on agree to the second.
-  const { items, liveItemId, liveEndsAt } = usePco();
+  const { items, liveItemId, liveEndsAt, serviceTimes, selectedServiceTimeId } = usePco();
   const leadMin: number = Number(widget.config.leadMin ?? 5);
+  // "service" (default): five minutes before the SERVICE is planned to end —
+  // its PCO start time plus the plan's total length. For back-to-back services
+  // the end is the hard constraint and the sermon is what flexes, so this is
+  // when the team must be walking however long the message ran. It fires off
+  // the clock whether or not anyone advanced PCO LIVE.
+  // "item": five minutes before the live item's own PCO countdown ends.
+  const mode: "service" | "item" = widget.config.mode === "item" ? "item" : "service";
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  const st = stageCallState(items, liveItemId, liveEndsAt, now, leadMin * 60);
+  const svcId = displayServiceTimeId(serviceTimes, selectedServiceTimeId, now);
+  const svcStart = serviceTimes.find((t) => t.id === svcId)?.ts ?? null;
+  const st =
+    mode === "service"
+      ? stageCallServiceState(items, liveItemId, serviceEndsAt(items, svcStart || null), now, leadMin * 60)
+      : stageCallState(items, liveItemId, liveEndsAt, now, leadMin * 60);
+  const endLabel = mode === "service" ? "service ends" : "item ends";
   const calling = st.phase === "call" || st.phase === "over";
 
   if (items.length === 0) return <NeedsPco hint="Pick this week's plan to see the closing set and its keys" />;
@@ -2909,10 +2920,12 @@ function StageCallWidget({ widget, update, editing }: WidgetProps) {
         <>
           <div className="w-stagecall-head">
             <span className="w-stagecall-eyebrow">
-              {st.live ? `Now · ${st.live.title}` : "Waiting for the service"}
+              {st.live ? `Now · ${st.live.title}` : mode === "service" && st.remaining !== null ? "Service running" : "Waiting for the service"}
             </span>
             {st.remaining !== null && (
-              <span className="w-stagecall-clock small">{fmtClock(st.remaining)} left</span>
+              <span className="w-stagecall-clock small">
+                {fmtClock(st.remaining)} until the {endLabel}
+              </span>
             )}
           </div>
           <div className="w-stagecall-songs">
@@ -2931,25 +2944,37 @@ function StageCallWidget({ widget, update, editing }: WidgetProps) {
               </>
             )}
           </div>
-          {st.live && st.next.length > 0 && st.remaining !== null && (
+          {st.next.length > 0 && st.remaining !== null && (
             <span className="muted small w-stagecall-foot">
-              Calls the team {leadMin} min before this item is due to end.
+              Calls the team {leadMin} min before the {endLabel}
+              {mode === "service" && svcStart ? ` (planned ${new Date(serviceEndsAt(items, svcStart) ?? 0).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })})` : ""}.
             </span>
+          )}
+          {mode === "service" && !svcStart && (
+            <span className="muted small w-stagecall-foot">No service time on this plan to count to.</span>
           )}
         </>
       )}
       {editing && (
-        <button
-          className="btn small ghost"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={() => {
-            const cycle = [3, 5, 7, 10];
-            const i = cycle.indexOf(leadMin);
-            update({ leadMin: cycle[(i + 1) % cycle.length] });
-          }}
-        >
-          Call {leadMin} min before
-        </button>
+        <div className="field-row" onMouseDown={(e) => e.stopPropagation()}>
+          <button
+            className="btn small ghost"
+            onClick={() => {
+              const cycle = [3, 5, 7, 10];
+              const i = cycle.indexOf(leadMin);
+              update({ leadMin: cycle[(i + 1) % cycle.length] });
+            }}
+          >
+            Call {leadMin} min before
+          </button>
+          <button
+            className="btn small ghost"
+            title="Service end: PCO start time + the plan's total length (back-to-back services). Item end: the live item's own countdown."
+            onClick={() => update({ mode: mode === "service" ? "item" : "service" })}
+          >
+            {mode === "service" ? "…the service ends" : "…the live item ends"}
+          </button>
+        </div>
       )}
     </div>
   );

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stageCallState, nextSongsAfter, fmtClock } from "../lib/stageCall";
+import { stageCallState, stageCallServiceState, nextSongsAfter, closingSongs, planLengthSec, serviceEndsAt, fmtClock } from "../lib/stageCall";
 import type { PlanItem } from "../pcoStore";
 
 const it_ = (id: string, type: string, length: number, key = "", title = id): PlanItem =>
@@ -79,3 +79,49 @@ describe("keys to the stage", () => {
     expect(fmtClock(0)).toBe("0:00");
   });
 });
+
+describe("keys to the stage — keyed to the service end", () => {
+  const START = Date.parse("2026-09-13T13:30:00Z"); // the 9:30 service
+  const total = planLengthSec(PLAN); // 300+360+240+2100+320+280+120
+  const END = START + total * 1000;
+
+  it("sums the plan (headers are free) and anchors the end to the service start", () => {
+    expect(total).toBe(3720);
+    expect(serviceEndsAt(PLAN, START)).toBe(END);
+    expect(serviceEndsAt(PLAN, null)).toBeNull();
+    expect(serviceEndsAt([], START)).toBeNull();
+  });
+
+  it("knows the closing set even when nobody is driving LIVE", () => {
+    expect(closingSongs(PLAN).map((s) => `${s.title} (${s.key})`)).toEqual([
+      "Build My Life (G)",
+      "Great Are You Lord (E)",
+    ]);
+    const s = stageCallServiceState(PLAN, null, END, END - 200_000, 300);
+    expect(s.phase).toBe("call");
+    expect(s.next.map((x) => x.key)).toEqual(["G", "E"]);
+  });
+
+  it("calls five minutes before the service ends however long the sermon ran", () => {
+    // The message is live and has run 10 minutes over its 35 — irrelevant here.
+    const late = END - 300_000;
+    expect(stageCallServiceState(PLAN, "msg", END, late - 1000, 300).phase).toBe("waiting");
+    expect(stageCallServiceState(PLAN, "msg", END, late, 300).phase).toBe("call");
+    expect(stageCallServiceState(PLAN, "msg", END, END + 60_000, 300).phase).toBe("over");
+  });
+
+  it("prefers the songs after the live item when there are some", () => {
+    const s = stageCallServiceState(PLAN, "ann", END, END - 100_000, 300);
+    // Announcements → message (not a song) → falls back to the closing set.
+    expect(s.next.map((x) => x.id)).toEqual(["s3", "s4"]);
+    const s2 = stageCallServiceState(PLAN, "h1", END, END - 100_000, 300);
+    // Pre-service header live: the opening set is genuinely next.
+    expect(s2.next.map((x) => x.id)).toEqual(["s1", "s2"]);
+  });
+
+  it("never calls without a service time to anchor to", () => {
+    expect(stageCallServiceState(PLAN, "msg", null, START, 300).phase).toBe("waiting");
+    expect(stageCallServiceState(PLAN, null, null, START, 300).phase).toBe("idle");
+  });
+});
+

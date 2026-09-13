@@ -53,6 +53,9 @@ export interface PlanItem {
   type: string;
   description: string;
   key: string; // song key (e.g. "G"); empty for non-songs
+  /** PCO service_position: "pre" items count BACKWARDS from the service start
+   *  (rehearsal, countdown), "during" forward from it, "post" after the end. */
+  position?: "pre" | "during" | "post";
   leader: string; // per-song leader (PCO "Leader" note, or description fallback)
   // Set on the derived display items when a live override is in effect, so the
   // editor can show "overridden vs. PCO" and offer a reset. Undefined on the raw
@@ -166,6 +169,7 @@ function parseItems(j: Json | null): PlanItem[] {
         title: a.title ?? "(untitled)",
         sequence: a.sequence ?? 0,
         length: a.length ?? 0,
+        position: a.service_position === "pre" || a.service_position === "post" ? a.service_position : "during",
         type: a.item_type ?? "item",
         description: a.description ?? a.html_details ?? "",
         key: a.key_name ?? "",
