@@ -57,6 +57,7 @@ import {
 import type { Widget } from "../lib/dashboards";
 import { usePco, fmtLen, type TeamMember , isDeclined } from "../pcoStore";
 import { stageCallState, fmtClock } from "../lib/stageCall";
+import { servicePhase, displayServiceTimeId } from "../lib/serviceClock";
 import { useAlerts } from "../alertsStore";
 import { useRelay } from "../relayStore";
 import { Avatar, MicCard } from "../components/PcoBits";
@@ -1053,7 +1054,11 @@ function ShowFlowWidget() {
   // Running clock time per item: service start + the sum of everything before
   // it. PCO gives durations but no per-item wall time, and "what time does the
   // sermon actually start" is the question the rundown gets asked all morning.
-  const base = serviceTimes.find((t) => t.id === selectedServiceTimeId)?.ts ?? 0;
+  // The service happening now (or next), not whichever one was selected at
+  // 7am: with four services and auto-advance off, every later service used to
+  // show the first one's start times.
+  const shownTimeId = displayServiceTimeId(serviceTimes, selectedServiceTimeId, Date.now());
+  const base = serviceTimes.find((t) => t.id === shownTimeId)?.ts ?? 0;
   const startAt = new Map<string, string>();
   if (base > 0) {
     let acc = 0;
@@ -2343,52 +2348,87 @@ function ServiceTimelineWidget() {
 
 // Big countdown to a target time (service start, segment, etc.).
 function ServiceClockWidget({ widget, editing, update }: WidgetProps) {
+  const { serviceTimes } = usePco();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
-  const target: string = widget.config.target ?? "";
+  // A hand-typed HH:MM overrides Planning Center. It used to be the ONLY
+  // source, which meant a fixed time all morning — wrong for every service
+  // but one, and "Set a target time in Edit" on every fresh kiosk.
+  const manual: string = widget.config.target ?? "";
+  const wall = new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   if (editing) {
     return (
       <div className="w-config">
-        <span className="muted small">Target time (24h)</span>
-        <input
-          className="input"
-          type="time"
-          value={target}
-          onMouseDown={(e) => e.stopPropagation()}
-          onChange={(e) => update({ target: e.target.value })}
-        />
-        <span className="muted small">Counts down to this time each day.</span>
+        <span className="muted small">
+          {manual ? "Counting to a fixed time each day." : "Following Planning Center: the next service time on this plan."}
+        </span>
+        <div className="field-row">
+          <input
+            className="input"
+            type="time"
+            value={manual}
+            onMouseDown={(e) => e.stopPropagation()}
+            onChange={(e) => update({ target: e.target.value })}
+          />
+          {manual && (
+            <button className="btn small ghost" onMouseDown={(e) => e.stopPropagation()} onClick={() => update({ target: "" })}>
+              Follow Planning Center
+            </button>
+          )}
+        </div>
+        <span className="muted small">Leave the time empty to follow the plan's service times automatically.</span>
       </div>
     );
   }
 
-  const wall = new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  if (!/^\d{1,2}:\d{2}$/.test(target)) {
-    return (
-      <div className="w-svcclock">
-        <span className="muted small">Set a target time in Edit</span>
-        <span className="sc-wall muted small">{wall}</span>
-      </div>
-    );
+  let label: string;
+  let big: string;
+  let cls = "";
+  const mmss = (sec: number) => {
+    const s = Math.abs(sec);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const ss = String(s % 60).padStart(2, "0");
+    return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+  };
+  if (/^\d{1,2}:\d{2}$/.test(manual)) {
+    const [h, m] = manual.split(":").map(Number);
+    const tgt = new Date(now);
+    tgt.setHours(h, m, 0, 0);
+    const diff = Math.round((tgt.getTime() - now) / 1000);
+    const before = diff > 0;
+    label = before ? "ON AIR IN" : "ON AIR";
+    big = before ? mmss(diff) : `+${mmss(diff)}`;
+    cls = before ? (diff <= 60 ? "urgent" : "") : "live";
+  } else {
+    const p = servicePhase(serviceTimes, now);
+    if (p.phase === "before") {
+      label = `ON AIR IN${p.time.name ? ` · ${p.time.name}` : ""}`;
+      big = mmss(p.secondsUntil);
+      cls = p.secondsUntil <= 60 ? "urgent" : "";
+    } else if (p.phase === "live") {
+      label = `ON AIR${p.time.name ? ` · ${p.time.name}` : ""}`;
+      big = `+${mmss(p.secondsSince)}`;
+      cls = "live";
+    } else {
+      return (
+        <div className="w-svcclock">
+          <span className="muted small">
+            {serviceTimes.length === 0 ? "No service times on this plan" : "No more services today"}
+          </span>
+          <span className="sc-wall muted small">{wall}</span>
+        </div>
+      );
+    }
   }
-  const [h, m] = target.split(":").map(Number);
-  const tgt = new Date(now);
-  tgt.setHours(h, m, 0, 0);
-  const diff = Math.round((tgt.getTime() - now) / 1000);
-  const before = diff > 0;
-  const abs = Math.abs(diff);
-  const mmss = `${Math.floor(abs / 60)}:${String(abs % 60).padStart(2, "0")}`;
-  const urgent = before && diff <= 60;
   return (
     <div className="w-svcclock">
-      <span className="sc-label">{before ? "ON AIR IN" : "ON AIR"}</span>
-      <span className={`sc-big ${before ? (urgent ? "urgent" : "") : "live"}`}>
-        {before ? mmss : `+${mmss}`}
-      </span>
+      <span className="sc-label">{label}</span>
+      <span className={`sc-big ${cls}`}>{big}</span>
       <span className="sc-wall muted small">{wall}</span>
     </div>
   );
