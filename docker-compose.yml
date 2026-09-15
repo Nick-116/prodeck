@@ -30,9 +30,9 @@ services:
     volumes:
       - prodeck_data:/home/prodeck/.config/ProDeck
 
-    # environment:
+    environment:
+      PRODECK_ADMIN_PASSWORD: password
     #   PRODECK_PORT: 4000
-    #   PRODECK_ADMIN_PASSWORD: changeme
     #   RUST_LOG: info
     #   PRODECK_NDI_LIB: /usr/local/lib/libndi.so
 
