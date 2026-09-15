@@ -43,12 +43,12 @@ pub fn connect_midi_out(
     let conn = midi_out
         .connect(&port, "prodeck-out")
         .map_err(|e| e.to_string())?;
-    *state.0.lock().unwrap_or_else(|p| p.into_inner()) = Some(conn);
+    *state.0.0.lock().unwrap_or_else(|p| p.into_inner()) = Some(conn);
     Ok(())
 }
 
 pub fn disconnect_midi_out(state: crate::app::State<MidiOutState>) {
-    *state.0.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    *state.0.0.lock().unwrap_or_else(|p| p.into_inner()) = None;
 }
 
 /// Send a key (pitch class 0–11) on the MIDI output as a Program Change, plus the
@@ -60,7 +60,7 @@ pub fn midi_send_key(
     cc_num: i32,
     state: crate::app::State<MidiOutState>,
 ) -> Result<(), String> {
-    let mut guard = state.0.lock().unwrap_or_else(|p| p.into_inner());
+    let mut guard = state.0.0.lock().unwrap_or_else(|p| p.into_inner());
     let conn = guard
         .as_mut()
         .ok_or_else(|| "No MIDI output connected".to_string())?;
@@ -136,14 +136,14 @@ pub fn connect_midi(
         )
         .map_err(|e| e.to_string())?;
 
-    *state.0.lock().unwrap_or_else(|p| p.into_inner()) = Some(conn);
+    *state.0.0.lock().unwrap_or_else(|p| p.into_inner()) = Some(conn);
     app.emit("midi:connected", port_name).ok();
     Ok(())
 }
 
 pub fn disconnect_midi(state: crate::app::State<MidiState>, app: AppHandle) {
     // Dropping the connection closes the port.
-    *state.0.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    *state.0.0.lock().unwrap_or_else(|p| p.into_inner()) = None;
     app.emit("midi:disconnected", ()).ok();
 }
 

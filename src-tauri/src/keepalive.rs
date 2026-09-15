@@ -485,10 +485,10 @@ mod platform {
 pub fn status_value(app: &AppHandle) -> Value {
     let exe = current_exe();
     let installed = platform::installed_program();
-    let awake = app
-        .try_state::<KeepAwake>()
-        .map(|k| k.0.lock().unwrap_or_else(|p| p.into_inner()).is_some())
-        .unwrap_or(false);
+    let awake = {
+        let k = app.state::<KeepAwake>();
+        k.inner().0.lock().unwrap_or_else(|p| p.into_inner()).is_some()
+    };
     json!({
         "installed": installed.is_some(),
         "program": installed,
@@ -530,8 +530,8 @@ pub fn keepalive_relaunch(_app: &AppHandle) -> Result<(), String> {
 }
 
 pub fn set_keep_awake(app: &AppHandle, on: bool) {
-    let Some(state) = app.try_state::<KeepAwake>() else { return };
-    let mut g = state.0.lock().unwrap_or_else(|p| p.into_inner());
+    let state = app.state::<KeepAwake>();
+    let mut g = state.inner().0.lock().unwrap_or_else(|p| p.into_inner());
     if on {
         platform::wake_on(&mut g);
     } else {

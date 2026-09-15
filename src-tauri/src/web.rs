@@ -2176,12 +2176,12 @@ async fn dispatch(
         "connect_midi" => {
             let name = s("name").ok_or("missing name")?;
             let midi = app.state::<crate::midi::MidiState>();
-            crate::midi::connect_midi_core(name, midi, app.clone())?;
+            crate::midi::connect_midi_core(name, midi.inner(), app.clone())?;
             Ok(Value::Null)
         }
         "disconnect_midi" => {
             let midi = app.state::<crate::midi::MidiState>();
-            crate::midi::disconnect_midi_core(midi);
+            crate::midi::disconnect_midi_core(midi.inner());
             Ok(Value::Null)
         }
         "list_midi_outputs" => {
@@ -2190,12 +2190,12 @@ async fn dispatch(
         "connect_midi_out" => {
             let name = s("name").ok_or("missing name")?;
             let midi_out = app.state::<crate::midi::MidiOutState>();
-            crate::midi::connect_midi_out_core(name, midi_out)?;
+            crate::midi::connect_midi_out_core(name, midi_out.inner())?;
             Ok(Value::Null)
         }
         "disconnect_midi_out" => {
             let midi_out = app.state::<crate::midi::MidiOutState>();
-            crate::midi::disconnect_midi_out_core(midi_out);
+            crate::midi::disconnect_midi_out_core(midi_out.inner());
             Ok(Value::Null)
         }
         // ---- OSC
@@ -2273,7 +2273,7 @@ async fn dispatch(
         }
         "get_relay_status" => {
             let relay = app.state::<crate::relay::RelayState>().inner().clone();
-            Ok(crate::relay::status_core(&relay))
+            Ok(crate::relay::status_core(&relay).await)
         }
         // ---- TapLink extended
         "tap_mappings" => {

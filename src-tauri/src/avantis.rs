@@ -808,7 +808,8 @@ pub fn spawn_watch_flush(app: AppHandle) {
                 // multi-KB blocking write under the state mutex would stall the
                 // mirror's parser and every snapshot for the duration.
                 let (writer, q) = {
-                    let st = app.state::<AvantisState>().inner().lock().unwrap_or_else(|p| p.into_inner());
+                    let avantis_st = app.state::<AvantisState>();
+                    let st = avantis_st.inner().lock().unwrap_or_else(|p| p.into_inner());
                     if !st.model.has_names() {
                         (None, Vec::new())
                     } else {
