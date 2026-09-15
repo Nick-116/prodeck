@@ -144,10 +144,11 @@ Zach Green — zach@whiteoakmedia.io
 ## Maintainers
 
 - **ProDeck** — [@whiteoakmedia](https://github.com/whiteoakmedia) (Zach Green)
-- **Windows** — [@jpeters0](https://github.com/jpeters0) (Peterson), who brought
-  the Windows build tooling, CI and [WINDOWS.md](WINDOWS.md) checklist, and who
-  has the Windows booth hardware to validate them on. See
-  [.github/CODEOWNERS](.github/CODEOWNERS).
+- **Windows** — [@jpeters0](https://github.com/jpeters0) (Peterson), who wrote
+  the Windows build tooling, CI and the [WINDOWS.md](WINDOWS.md) validation
+  checklist, and who has Windows booth hardware to test them on. He also found
+  and fixed the Planning Center `filter=future` bug that dropped the current
+  day's plan mid-service.
 
 ## Licence
 
