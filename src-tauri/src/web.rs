@@ -3,6 +3,7 @@
 // UI over HTTP, streams app events to browsers via Server-Sent Events, and
 // proxies a password-gated whitelist of control commands via POST /api/cmd.
 
+use crate::app::AppHandle;
 use crate::pco;
 use crate::propresenter::{current_config, ProPresenterState};
 use crate::settings::{Settings, SettingsState};
@@ -13,7 +14,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{AppHandle, Listener, Manager, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
@@ -90,7 +90,14 @@ impl WebInner {
 pub type WebState = Arc<WebInner>;
 
 fn web_password(app: &AppHandle) -> String {
-    app.state::<SettingsState>().lock().unwrap_or_else(|p| p.into_inner()).web_password.clone()
+    let stored = app.state::<SettingsState>().lock().unwrap_or_else(|p| p.into_inner()).web_password.clone();
+    if stored.is_empty() {
+        // Docker bootstrap: allow PRODECK_ADMIN_PASSWORD env var to unlock the
+        // settings page before a password has been configured in the UI.
+        std::env::var("PRODECK_ADMIN_PASSWORD").unwrap_or_default()
+    } else {
+        stored
+    }
 }
 
 /// Access tier of a presented token. Admin = the original web password (full
@@ -175,7 +182,7 @@ fn clear_auth_failures(peer: &str) {
 }
 
 fn token_tier(app: &AppHandle, token: &str) -> Option<Tier> {
-    let (admin, member, invite) = {
+    let (stored_admin, member, invite) = {
         let state = app.state::<SettingsState>();
         let s = state.lock().unwrap_or_else(|p| p.into_inner());
         (
@@ -183,6 +190,12 @@ fn token_tier(app: &AppHandle, token: &str) -> Option<Tier> {
             s.web_member_password.clone(),
             s.web_invite_token.clone(),
         )
+    };
+    // Use env-var bootstrap password when no password is configured yet.
+    let admin = if stored_admin.is_empty() {
+        std::env::var("PRODECK_ADMIN_PASSWORD").unwrap_or_default()
+    } else {
+        stored_admin
     };
     if !admin.is_empty() && token == admin {
         return Some(Tier::Admin);
@@ -208,47 +221,49 @@ pub(crate) fn token_ok(app: &AppHandle, token: &str) -> bool {
     token_tier(app, token).is_some()
 }
 
-/// Register one-time global listeners that fan app events into the SSE channel.
-fn ensure_listeners(app: &AppHandle, web: &WebState) {
+/// Spawn a task that reads from the AppHandle event bus and fans events into
+/// the SSE broadcast channel, maintaining snapshots and throttling audio.
+fn spawn_event_bridge(app: &AppHandle, web: &WebState) {
     if web.listeners_ready.swap(true, Ordering::AcqRel) {
         return;
     }
-    for &name in FORWARD_EVENTS {
-        let web = web.clone();
-        let nm = name.to_string();
-        // Meter streams fire ~12×/s all day — relaying every frame to every
-        // phone burns their battery for no visible gain. Forward at most ~5/s
-        // (snapshot still updates each frame so late joiners get fresh state).
-        let throttled = name == "audio:level" || name == "audio:rta";
-        let last_sent = std::sync::atomic::AtomicU64::new(0);
-        app.listen(name, move |ev| {
-            // ev.payload() is already a JSON string ("null" for unit payloads).
-            let payload = ev.payload();
-            let frame = format!("{{\"event\":\"{}\",\"payload\":{}}}", nm, payload);
+    let web = web.clone();
+    let mut rx = app.subscribe_events();
+    tokio::spawn(async move {
+        // Per-event throttle for high-frequency audio meters (~12/s → ~5/s).
+        let mut last_audio_ms: u64 = 0;
+        loop {
+            let (name, payload) = match rx.recv().await {
+                Ok(pair) => pair,
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            };
+            if !FORWARD_EVENTS.contains(&name.as_str()) {
+                continue;
+            }
+            let throttled = name == "audio:level" || name == "audio:rta";
             let drop_frame = if throttled {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)
                     .unwrap_or(0);
-                let last = last_sent.load(Ordering::Acquire);
-                if now.saturating_sub(last) < 200 {
+                if now.saturating_sub(last_audio_ms) < 200 {
                     true
                 } else {
-                    last_sent.store(now, Ordering::Release);
+                    last_audio_ms = now;
                     false
                 }
             } else {
                 false
             };
-            if !ONE_SHOT.contains(&nm.as_str()) {
+            let frame = format!("{{\"event\":\"{}\",\"payload\":{}}}", name, payload);
+            if !ONE_SHOT.contains(&name.as_str()) {
                 let mut snap = web.snapshot.lock().unwrap_or_else(|p| p.into_inner());
-                // ProPresenter dropped — forget its stale connected/status snapshot.
-                if nm == "pp:disconnected" {
+                if name == "pp:disconnected" {
                     snap.retain(|k, _| !k.starts_with("pp:"));
                 }
-                // pp:status carries several distinct streams under one event name.
-                let key = if nm == "pp:status" {
-                    serde_json::from_str::<Value>(payload)
+                let key = if name == "pp:status" {
+                    serde_json::from_str::<Value>(&payload)
                         .ok()
                         .and_then(|v| {
                             v.get("stream")
@@ -257,25 +272,25 @@ fn ensure_listeners(app: &AppHandle, web: &WebState) {
                         })
                         .unwrap_or_else(|| "pp:status".to_string())
                 } else {
-                    nm.clone()
+                    name.clone()
                 };
                 snap.insert(key, frame.clone());
             }
             if !drop_frame {
                 let _ = web.tx.send(frame);
             }
-        });
-    }
+        }
+    });
 }
 
 pub fn start(app: AppHandle, web: WebState, port: u16) {
     if web.running.swap(true, Ordering::AcqRel) {
         return; // already running
     }
-    ensure_listeners(&app, &web);
+    spawn_event_bridge(&app, &web);
     web.port.store(port, Ordering::Release);
 
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         // The previous server (after a port change) may hold the socket briefly.
         let mut listener = None;
         for _ in 0..6 {
@@ -302,7 +317,7 @@ pub fn start(app: AppHandle, web: WebState, port: u16) {
                 Ok(Ok((stream, _addr))) => {
                     let app2 = app.clone();
                     let web2 = web.clone();
-                    tauri::async_runtime::spawn(async move {
+                    tokio::spawn(async move {
                         let _ = handle_conn(stream, app2, web2).await;
                     });
                 }
@@ -2085,28 +2100,291 @@ async fn dispatch(
             crate::tap::override_core(app, s("state")).await?;
             Ok(Value::Null)
         }
-        // Anything not whitelisted above is host-only (native I/O, process
-        // control, PCO sync…). This must REJECT, not resolve null: resolving
-        // made phone taps look like successes — Captions/Settings silently did
-        // nothing, `null` device lists crashed pages, and a phone "Connect"
-        // rewrote the booth's saved ProPresenter host.
+        // ---- ProPresenter connection management (admin-only)
+        "pp_connect" => {
+            let host = s("host").ok_or("missing host")?;
+            let port_n = args.get("port").and_then(|v| v.as_u64()).unwrap_or(1025) as u16;
+            let config = crate::propresenter::ProPresenterConfig { host, port: port_n };
+            let state = app.state::<crate::propresenter::ProPresenterState>();
+            crate::propresenter::pp_connect(config, state, app.clone()).await
+        }
+        "pp_disconnect" => {
+            let state = app.state::<crate::propresenter::ProPresenterState>();
+            crate::propresenter::pp_disconnect(state, app.clone()).await;
+            Ok(Value::Null)
+        }
+        "pp_is_connected" => {
+            let pp = pp_handle(app);
+            let connected = pp.lock().await.is_some();
+            Ok(json!({ "connected": connected }))
+        }
+        // ---- Discovery
+        "discover_services" => {
+            let v = crate::discovery::discover_services_core().await?;
+            Ok(serde_json::to_value(v).unwrap_or(Value::Null))
+        }
+        // ---- Audio (list/status only; capture control is admin-only)
+        "list_audio_inputs" => {
+            Ok(serde_json::to_value(crate::audio::list_inputs_core()).unwrap_or(Value::Null))
+        }
+        "default_audio_input" => {
+            Ok(serde_json::to_value(crate::audio::default_input_core()).unwrap_or(Value::Null))
+        }
+        "audio_input_channels" => {
+            let name = s("name").unwrap_or_default();
+            Ok(json!({ "channels": crate::audio::input_channels_core(&name) }))
+        }
+        "start_audio_capture" => {
+            let name = s("name");
+            let channels = args.get("channels").and_then(|v| v.as_u64()).unwrap_or(1) as u16;
+            let audio = app.state::<crate::audio::AudioState>().inner().clone();
+            crate::audio::start_capture_core(name, channels, &audio, app.clone()).await?;
+            Ok(Value::Null)
+        }
+        "stop_audio_capture" => {
+            let audio = app.state::<crate::audio::AudioState>().inner().clone();
+            crate::audio::stop_capture_core(&audio);
+            Ok(Value::Null)
+        }
+        // ---- Transcription
+        "transcription_status" => {
+            let st = app.state::<SettingsState>();
+            Ok(serde_json::to_value(crate::transcription::status_core(st.inner()))
+                .unwrap_or(Value::Null))
+        }
+        "start_transcription" => {
+            let t = app.state::<crate::transcription::TranscriptionState>().inner().clone();
+            let audio = app.state::<crate::audio::AudioState>().inner().clone();
+            let st = app.state::<SettingsState>();
+            crate::transcription::start_core(&t, &audio, st.inner(), app.clone()).await?;
+            Ok(Value::Null)
+        }
+        "stop_transcription" => {
+            let t = app.state::<crate::transcription::TranscriptionState>().inner().clone();
+            crate::transcription::stop_core(&t);
+            Ok(Value::Null)
+        }
+        "inject_caption" => {
+            let text = s("text").ok_or("missing text")?;
+            crate::transcription::inject_caption_core(text, app);
+            Ok(Value::Null)
+        }
+        // ---- MIDI (list/status admin-only; send already in dispatch)
+        "list_midi_inputs" => {
+            Ok(serde_json::to_value(crate::midi::list_inputs_core()).unwrap_or(Value::Null))
+        }
+        "connect_midi" => {
+            let name = s("name").ok_or("missing name")?;
+            let midi = app.state::<crate::midi::MidiState>();
+            crate::midi::connect_midi_core(name, midi, app.clone())?;
+            Ok(Value::Null)
+        }
+        "disconnect_midi" => {
+            let midi = app.state::<crate::midi::MidiState>();
+            crate::midi::disconnect_midi_core(midi);
+            Ok(Value::Null)
+        }
+        "list_midi_outputs" => {
+            Ok(serde_json::to_value(crate::midi::list_outputs_core()).unwrap_or(Value::Null))
+        }
+        "connect_midi_out" => {
+            let name = s("name").ok_or("missing name")?;
+            let midi_out = app.state::<crate::midi::MidiOutState>();
+            crate::midi::connect_midi_out_core(name, midi_out)?;
+            Ok(Value::Null)
+        }
+        "disconnect_midi_out" => {
+            let midi_out = app.state::<crate::midi::MidiOutState>();
+            crate::midi::disconnect_midi_out_core(midi_out);
+            Ok(Value::Null)
+        }
+        // ---- OSC
+        "start_osc" => {
+            let port_n = args.get("port").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+            let osc = app.state::<crate::osc::OscState>().inner().clone();
+            crate::osc::start_core(port_n, &osc, app.clone()).await?;
+            Ok(Value::Null)
+        }
+        "stop_osc" => {
+            let osc = app.state::<crate::osc::OscState>().inner().clone();
+            crate::osc::stop_core(&osc);
+            Ok(Value::Null)
+        }
+        // ---- Planning Center extended
+        "pco_start_sync" => {
+            let st_id = s("serviceTypeId").ok_or("missing serviceTypeId")?;
+            let plan_id = s("planId").ok_or("missing planId")?;
+            let pco = app.state::<crate::pco::PcoState>().inner().clone();
+            let a = pco_auth(app).await?;
+            crate::pco::start_sync_core(&pco, a, st_id, plan_id, app.clone()).await?;
+            Ok(Value::Null)
+        }
+        "pco_stop_sync" => {
+            let pco = app.state::<crate::pco::PcoState>().inner().clone();
+            crate::pco::stop_sync_core(&pco);
+            Ok(Value::Null)
+        }
+        "pco_set_live_interval" => {
+            let ms = args.get("ms").and_then(|v| v.as_u64()).unwrap_or(5000);
+            let pco = app.state::<crate::pco::PcoState>().inner().clone();
+            crate::pco::set_live_interval_core(&pco, ms);
+            Ok(Value::Null)
+        }
+        "pco_live_controller" => {
+            let st_id = s("serviceTypeId").ok_or("missing serviceTypeId")?;
+            let plan_id = s("planId").ok_or("missing planId")?;
+            let a = pco_auth(app).await?;
+            crate::pco::live_controller_core(&a, &st_id, &plan_id).await
+        }
+        // ---- PCO OAuth
+        "pco_oauth_begin" => {
+            crate::pcoauth::oauth_begin_core(app.clone()).await
+                .map(|url| json!({ "url": url }))
+        }
+        "pco_oauth_status" => {
+            Ok(crate::pcoauth::oauth_status_core(app.clone()))
+        }
+        "pco_oauth_disconnect" => {
+            crate::pcoauth::oauth_disconnect_core(app.clone());
+            Ok(Value::Null)
+        }
+        // ---- Relay
+        "relay_start_host" => {
+            let relay = app.state::<crate::relay::RelayState>().inner().clone();
+            crate::relay::start_host_core(&relay, app.clone()).await?;
+            Ok(Value::Null)
+        }
+        "relay_broadcast" => {
+            let relay = app.state::<crate::relay::RelayState>().inner().clone();
+            let msg = args.get("message").cloned().unwrap_or(Value::Null);
+            crate::relay::broadcast_core(&relay, msg).await?;
+            Ok(Value::Null)
+        }
+        "relay_connect_client" => {
+            let url = s("url").ok_or("missing url")?;
+            let relay = app.state::<crate::relay::RelayState>().inner().clone();
+            crate::relay::connect_client_core(&relay, url, app.clone()).await?;
+            Ok(Value::Null)
+        }
+        "relay_stop" => {
+            let relay = app.state::<crate::relay::RelayState>().inner().clone();
+            crate::relay::stop_core(&relay).await;
+            Ok(Value::Null)
+        }
+        "get_relay_status" => {
+            let relay = app.state::<crate::relay::RelayState>().inner().clone();
+            Ok(crate::relay::status_core(&relay))
+        }
+        // ---- TapLink extended
+        "tap_mappings" => {
+            crate::tap::mappings_core(app).await
+        }
+        "tap_save_mappings" => {
+            let mappings = args.get("mappings").cloned().unwrap_or(Value::Null);
+            crate::tap::save_mappings_core(mappings, app).await?;
+            Ok(Value::Null)
+        }
+        "tap_check_links" => {
+            crate::tap::check_links_core(app).await
+        }
+        "tap_test" => {
+            crate::tap::test_core(app).await
+        }
+        // ---- Diagnostics
+        "diag_bundle" => {
+            let client = args.get("client").cloned().unwrap_or(Value::Null);
+            crate::diag::bundle_core(client, app).map(Value::String)
+        }
+        "diag_recent_log" => {
+            let n = args.get("n").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+            Ok(serde_json::to_value(crate::diag::recent_log(n)).unwrap_or(Value::Null))
+        }
+        // ---- Keepalive / keep-awake
+        "keepalive_status" => {
+            Ok(crate::keepalive::status_core(app))
+        }
+        "keep_awake_set" => {
+            let on = args.get("on").and_then(|v| v.as_bool()).unwrap_or(false);
+            crate::keepalive::set_keep_awake(app, on);
+            let st = app.state::<crate::settings::SettingsState>();
+            let to_save = {
+                let mut g = st.lock().unwrap_or_else(|p| p.into_inner());
+                g.keep_awake = on;
+                g.clone()
+            };
+            crate::settings::save(&to_save)?;
+            Ok(Value::Null)
+        }
+        // ---- Backup
+        "backup_export" => {
+            Ok(Value::String(crate::backup::export_core().await?))
+        }
+        "backup_import" => {
+            let data = s("data").ok_or("missing data")?;
+            crate::backup::import_core(data, app).await?;
+            Ok(Value::Null)
+        }
+        // ---- Position files (write ops, admin-only)
+        "posfile_add" => {
+            let position = s("position").unwrap_or_default();
+            let name = s("name").ok_or("missing name")?;
+            let mime = s("mime").unwrap_or_default();
+            let data = s("data").ok_or("missing data")?;
+            let st = app.state::<crate::posfiles::PosFilesState>().inner().clone();
+            let f = crate::posfiles::add_core(app, &st, position, name, mime, data)?;
+            Ok(json!({ "id": f.id }))
+        }
+        "posfile_remove" => {
+            let id = s("id").ok_or("missing id")?;
+            let st = app.state::<crate::posfiles::PosFilesState>().inner().clone();
+            crate::posfiles::remove_core(app, &st, id)?;
+            Ok(Value::Null)
+        }
+        // ---- Check-in extended
+        "checkin_wan_ip" => {
+            Ok(json!({ "ip": crate::checkin::wan_ip_core().await }))
+        }
+        "checkin_set_service" => {
+            let s_val = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let st = app.state::<crate::checkin::CheckinState>().inner().clone();
+            crate::checkin::set_service_core(&st, &s_val("serviceKey"), app)?;
+            Ok(Value::Null)
+        }
+        // ---- Identity extended
+        "identity_heal_pco" => {
+            let identity = app.state::<crate::identity::IdentityState>().inner().clone();
+            let team: Vec<crate::identity::RosterEntry> =
+                serde_json::from_value(args.get("team").cloned().unwrap_or(Value::Array(vec![])))
+                    .map_err(|e| e.to_string())?;
+            Ok(crate::identity::heal_pco_core(app, &identity, team))
+        }
+        // ---- Web gateway status / reconfigure (always-on in Docker)
+        "web_status" => Ok(json!({
+            "running": true,
+            "port": app.state::<WebState>().port.load(Ordering::Acquire),
+        })),
+        "web_start" => {
+            let port_n = args.get("port").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+            if port_n > 0 {
+                let web = app.state::<WebState>().inner().clone();
+                stop(&web);
+                start(app.clone(), web, port_n);
+            }
+            Ok(Value::Null)
+        }
+        "web_stop" => Err("web gateway is always-on in Docker mode".into()),
+        // Anything not handled above.
         _ => Err(format!("'{cmd}' is not available from a browser client")),
     }
 }
 
 // ---------------------------------------------------------------------------
-// Tauri commands
+// Commands (called from dispatch; no longer tauri commands)
 // ---------------------------------------------------------------------------
 
-/// Open (or close) the window during which /join hands out the crew token.
-///
-/// /join cannot authenticate its caller — a poster on the green-room wall has
-/// no password — so the only honest control is *when* it answers. `minutes` of
-/// 0 closes it immediately.
-#[tauri::command]
 pub fn crew_join_open(
     minutes: u32,
-    settings: tauri::State<'_, SettingsState>,
+    settings: crate::app::State<SettingsState>,
 ) -> Result<Value, String> {
     let until = if minutes == 0 {
         0
@@ -2127,9 +2405,7 @@ pub fn crew_join_open(
     Ok(json!({ "until": until }))
 }
 
-/// Is the joining window open, and for how much longer?
-#[tauri::command]
-pub fn crew_join_state(settings: tauri::State<'_, SettingsState>) -> Value {
+pub fn crew_join_state(settings: crate::app::State<SettingsState>) -> Value {
     let until = settings.lock().unwrap_or_else(|p| p.into_inner()).crew_join_until_ms;
     let now = crate::identity::now_ms();
     json!({
@@ -2139,25 +2415,22 @@ pub fn crew_join_state(settings: tauri::State<'_, SettingsState>) -> Value {
     })
 }
 
-#[tauri::command]
-pub fn web_status(state: tauri::State<'_, WebState>) -> Value {
+pub fn web_status(state: crate::app::State<WebState>) -> Value {
     json!({
         "running": state.running.load(Ordering::Acquire),
         "port": state.port.load(Ordering::Acquire),
     })
 }
 
-#[tauri::command]
-pub fn web_start(port: u16, app: AppHandle, state: tauri::State<'_, WebState>) {
+pub fn web_start_cmd(port: u16, app: AppHandle, state: crate::app::State<WebState>) {
     if state.running.load(Ordering::Acquire) {
-        stop(&state);
+        stop(state.inner());
     }
     start(app, state.inner().clone(), port);
 }
 
-#[tauri::command]
-pub fn web_stop(state: tauri::State<'_, WebState>) {
-    stop(&state);
+pub fn web_stop_cmd(state: crate::app::State<WebState>) {
+    stop(state.inner());
 }
 
 #[cfg(test)]

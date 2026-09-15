@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter};
+use crate::app::AppHandle;
 
 const MAX_NAME: usize = 32;
 const LOCKOUT_AFTER: u32 = 5;
@@ -916,93 +916,82 @@ pub fn heal_pco_core(
 
 // ---------------------------------------------------------------- commands
 
-#[tauri::command]
-pub fn identity_list(identity: tauri::State<'_, IdentityState>) -> serde_json::Value {
+pub fn identity_list(identity: crate::app::State<IdentityState>) -> serde_json::Value {
     list_core(identity.inner())
 }
 
-#[tauri::command]
-pub fn identity_roles(identity: tauri::State<'_, IdentityState>) -> serde_json::Value {
+pub fn identity_roles(identity: crate::app::State<IdentityState>) -> serde_json::Value {
     roles_core(identity.inner())
 }
 
-#[tauri::command]
 pub fn identity_approve(
     id: String,
     approved: bool,
-    identity: tauri::State<'_, IdentityState>,
+    identity: crate::app::State<IdentityState>,
     app: AppHandle,
 ) -> Result<(), String> {
     approve_core(&app, identity.inner(), id, approved)
 }
 
-#[tauri::command]
 pub fn identity_set_perms(
     id: String,
     perms: Vec<String>,
-    identity: tauri::State<'_, IdentityState>,
+    identity: crate::app::State<IdentityState>,
     app: AppHandle,
 ) -> Result<(), String> {
     set_perms_core(&app, identity.inner(), id, perms)
 }
 
-#[tauri::command]
 pub fn identity_set_role(
     id: String,
     role: String,
-    identity: tauri::State<'_, IdentityState>,
+    identity: crate::app::State<IdentityState>,
     app: AppHandle,
 ) -> Result<(), String> {
     set_role_core(&app, identity.inner(), id, role)
 }
 
-#[tauri::command]
 pub fn identity_update_profile(
     id: String,
     name: Option<String>,
     nickname: Option<String>,
     pco_name: Option<String>,
-    identity: tauri::State<'_, IdentityState>,
+    identity: crate::app::State<IdentityState>,
     app: AppHandle,
 ) -> Result<serde_json::Value, String> {
     update_profile_core(&app, identity.inner(), id, name, nickname, pco_name)
 }
 
-#[tauri::command]
 pub fn identity_remove(
     id: String,
-    identity: tauri::State<'_, IdentityState>,
+    identity: crate::app::State<IdentityState>,
     app: AppHandle,
 ) -> Result<(), String> {
     remove_core(&app, identity.inner(), id)
 }
 
-#[tauri::command]
 pub fn invite_create(
     name: String,
     role: String,
-    identity: tauri::State<'_, IdentityState>,
+    identity: crate::app::State<IdentityState>,
 ) -> Result<Invite, String> {
     invite_create_core(identity.inner(), name, role)
 }
 
-#[tauri::command]
-pub fn invite_list(identity: tauri::State<'_, IdentityState>) -> serde_json::Value {
+pub fn invite_list(identity: crate::app::State<IdentityState>) -> serde_json::Value {
     invite_list_core(identity.inner())
 }
 
-#[tauri::command]
-pub fn invite_revoke(token: String, identity: tauri::State<'_, IdentityState>) {
+pub fn invite_revoke(token: String, identity: crate::app::State<IdentityState>) {
     invite_revoke_core(identity.inner(), token)
 }
 
 /// Booth-only (never on the gateway allowlist): the booth frontend calls this
 /// whenever a PCO roster lands, so typed-name signups converge on their PCO
 /// person without anyone touching Settings.
-#[tauri::command]
 pub fn identity_heal_pco(
     team: Vec<RosterEntry>,
-    identity: tauri::State<'_, IdentityState>,
+    identity: crate::app::State<IdentityState>,
     app: AppHandle,
 ) -> serde_json::Value {
     heal_pco_core(&app, identity.inner(), team)

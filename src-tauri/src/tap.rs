@@ -14,7 +14,7 @@
 
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager};
+use crate::app::AppHandle;
 use tokio::sync::Mutex;
 
 // Debounce so an operator arrowing through slides doesn't spam the edge;
@@ -360,7 +360,7 @@ pub async fn on_slide(app: &AppHandle, data: &Value) {
 /// evidence it's still live. A repeat push is idempotent and restarts the
 /// keyword's revert timer, which is what re-firing the giving slide expects.
 fn schedule_push(app: AppHandle, state: TapState, url: String, token: String, keyword: String) {
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         let my_gen = {
             let mut t = state.lock().await;
             t.generation += 1;
@@ -456,7 +456,7 @@ async fn push_state(
 /// never reports health it doesn't have. Deliberately does NOT extend the
 /// edge's TTL (that clock runs from the last state change).
 pub fn spawn_heartbeat(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(HEARTBEAT_SECS)).await;
             let Some((url, token)) = tap_config(&app) else { continue };
@@ -555,7 +555,6 @@ pub async fn resume_core(app: &AppHandle) -> Result<(), String> {
 }
 
 /// Manual override from the UI: push a keyword now, or None for default.
-#[tauri::command]
 pub async fn tap_override(state: Option<String>, app: AppHandle) -> Result<(), String> {
     override_core(&app, state).await
 }
@@ -605,7 +604,6 @@ pub async fn edge_state_core(app: &AppHandle) -> Result<Value, String> {
     Ok(state)
 }
 
-#[tauri::command]
 pub async fn tap_edge_state(app: AppHandle) -> Result<Value, String> {
     edge_state_core(&app).await
 }
@@ -628,7 +626,6 @@ pub async fn stats_core(app: &AppHandle) -> Result<Value, String> {
     resp.json::<Value>().await.map_err(|e| e.to_string())
 }
 
-#[tauri::command]
 pub async fn tap_stats(app: AppHandle) -> Result<Value, String> {
     stats_core(&app).await
 }
@@ -659,7 +656,6 @@ pub async fn stats_range_core(app: &AppHandle, from: i64, to: i64) -> Result<Val
     Ok(body)
 }
 
-#[tauri::command]
 pub async fn tap_stats_range(from: i64, to: i64, app: AppHandle) -> Result<Value, String> {
     stats_range_core(&app, from, to).await
 }
@@ -675,7 +671,6 @@ pub async fn tap_stats_range(from: i64, to: i64, app: AppHandle) -> Result<Value
 /// later, and the UI treats 401/403/405/429 as "can't tell" rather than dead
 /// for the same reason — a false "dead giving link" would train the operator
 /// to ignore this check.
-#[tauri::command]
 pub async fn tap_check_links(urls: Vec<String>) -> Result<Value, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -723,10 +718,9 @@ pub async fn tap_check_links(urls: Vec<String>) -> Result<Value, String> {
 /// The raw mapping config (`{default, ttl_minutes, keywords}`) for the editor.
 /// Booth-only, like the rest of TapLink's configuration: the gateway exposes
 /// picking a keyword, not rewriting where the discs can point.
-#[tauri::command]
-pub async fn tap_mappings(app: AppHandle) -> Result<Value, String> {
-    let (url, token) = tap_endpoint(&app).ok_or("TapLink isn't configured — set the edge URL and token in Settings")?;
-    let client = edge_client(&app).await;
+pub async fn mappings_core(app: &AppHandle) -> Result<Value, String> {
+    let (url, token) = tap_endpoint(app).ok_or("TapLink isn't configured — set the edge URL and token in Settings")?;
+    let client = edge_client(app).await;
     let resp = client
         .get(format!("{}/api/mappings", url))
         .bearer_auth(&token)
@@ -739,14 +733,17 @@ pub async fn tap_mappings(app: AppHandle) -> Result<Value, String> {
     resp.json::<Value>().await.map_err(|e| e.to_string())
 }
 
+pub async fn tap_mappings(app: AppHandle) -> Result<Value, String> {
+    mappings_core(&app).await
+}
+
 /// Replace the mapping config. The edge validates (keyword charset, http(s)
 /// URLs, TTL bounds) and answers 422 with the reason, which we surface as-is;
 /// a live state whose keyword just disappeared falls back to the default on
 /// the edge's next read, so no separate cleanup is needed here.
-#[tauri::command]
-pub async fn tap_save_mappings(config: Value, app: AppHandle) -> Result<Value, String> {
-    let (url, token) = tap_endpoint(&app).ok_or("TapLink isn't configured — set the edge URL and token in Settings")?;
-    let client = edge_client(&app).await;
+pub async fn save_mappings_core(config: Value, app: &AppHandle) -> Result<(), String> {
+    let (url, token) = tap_endpoint(app).ok_or("TapLink isn't configured — set the edge URL and token in Settings")?;
+    let client = edge_client(app).await;
     let resp = client
         .put(format!("{}/api/mappings", url))
         .bearer_auth(&token)
@@ -764,15 +761,62 @@ pub async fn tap_save_mappings(config: Value, app: AppHandle) -> Result<Value, S
             .unwrap_or_else(|| format!("edge returned {status}"));
         return Err(reason);
     }
-    Ok(body)
+    Ok(())
+}
+
+pub async fn tap_save_mappings(config: Value, app: AppHandle) -> Result<Value, String> {
+    save_mappings_core(config, &app).await.map(|_| Value::Null)
+}
+
+/// Dispatch-facing: test the edge using the URL and token from settings.
+pub async fn test_core(app: &AppHandle) -> Result<Value, String> {
+    let (url, token) = tap_endpoint(app).ok_or("TapLink isn't configured — set the edge URL and token in Settings")?;
+    let client = edge_client(app).await;
+    let health = client
+        .get(format!("{}/api/health", url.trim_end_matches('/')))
+        .send()
+        .await
+        .map_err(|e| format!("edge unreachable: {e}"))?;
+    if !health.status().is_success() {
+        return Err(format!("edge health returned {}", health.status()));
+    }
+    let auth = client
+        .get(format!("{}/api/state", url.trim_end_matches('/')))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if auth.status().as_u16() == 401 {
+        return Err("edge reachable, but the token was rejected".into());
+    }
+    if !auth.status().is_success() {
+        return Err(format!("edge returned {}", auth.status()));
+    }
+    let v = auth.json::<Value>().await.map_err(|e| e.to_string())?;
+    let current = v.get("state").and_then(|s| s.as_str()).unwrap_or("default");
+    Ok(serde_json::json!({ "status": format!("Connected — current state: {current}") }))
+}
+
+/// Dispatch-facing: check all keyword destination URLs from the edge mappings.
+pub async fn check_links_core(app: &AppHandle) -> Result<Value, String> {
+    let mappings = mappings_core(app).await?;
+    let urls: Vec<String> = mappings
+        .get("keywords")
+        .and_then(|k| k.as_object())
+        .map(|k| {
+            k.values()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    tap_check_links(urls).await
 }
 
 /// Settings "Test" button: check reachability and that the token works.
-#[tauri::command]
 pub async fn tap_test(
     edge_url: String,
     token: String,
-    tap: tauri::State<'_, TapState>,
+    tap: crate::app::State<TapState>,
 ) -> Result<String, String> {
     let url = edge_url.trim_end_matches('/');
     let client = { tap.lock().await.client.clone() };

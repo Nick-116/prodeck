@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Manager};
+use crate::app::AppHandle;
 use web_push::{
     request_builder::build_request, ContentEncoding, SubscriptionInfo, VapidSignatureBuilder,
     WebPushMessageBuilder,
@@ -238,7 +238,7 @@ fn drop_endpoint(push: &PushState, endpoint: &str) {
 /// page must appear on open screens instantly even if a push service is slow.
 pub fn notify(app: &AppHandle, user_ids: Vec<String>, payload: serde_json::Value) {
     let app = app.clone();
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         let push = app.state::<PushState>().inner().clone();
         let private = {
             let s = push.store.lock().unwrap_or_else(|p| p.into_inner());
@@ -299,24 +299,21 @@ pub fn notify(app: &AppHandle, user_ids: Vec<String>, payload: serde_json::Value
 
 // ---------------------------------------------------------------- commands
 
-#[tauri::command]
-pub fn push_public_key(push: tauri::State<'_, PushState>) -> serde_json::Value {
+pub fn push_public_key(push: crate::app::State<PushState>) -> serde_json::Value {
     json!({ "key": public_key(push.inner()) })
 }
 
-#[tauri::command]
 pub fn push_subscribe(
     user_id: String,
     endpoint: String,
     p256dh: String,
     auth: String,
-    push: tauri::State<'_, PushState>,
+    push: crate::app::State<PushState>,
 ) -> Result<(), String> {
     subscribe(push.inner(), user_id, endpoint, p256dh, auth)
 }
 
-#[tauri::command]
-pub fn push_unsubscribe(user_id: String, push: tauri::State<'_, PushState>) {
+pub fn push_unsubscribe(user_id: String, push: crate::app::State<PushState>) {
     unsubscribe(push.inner(), &user_id)
 }
 

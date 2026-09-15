@@ -2,7 +2,7 @@ use base64::Engine;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
+use crate::app::AppHandle;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
@@ -71,10 +71,9 @@ async fn try_version(
         .map_err(|_| format!(":{} responded but isn't the ProPresenter API", cfg.port))
 }
 
-#[tauri::command]
 pub async fn pp_connect(
     config: ProPresenterConfig,
-    state: tauri::State<'_, ProPresenterState>,
+    state: crate::app::State<ProPresenterState>,
     app: AppHandle,
 ) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::builder()
@@ -143,9 +142,8 @@ pub async fn pp_connect(
     Ok(version)
 }
 
-#[tauri::command]
 pub async fn pp_disconnect(
-    state: tauri::State<'_, ProPresenterState>,
+    state: crate::app::State<ProPresenterState>,
     app: AppHandle,
 ) -> Result<(), String> {
     let mut s = state.lock().await;
@@ -156,8 +154,7 @@ pub async fn pp_disconnect(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn pp_is_connected(state: tauri::State<'_, ProPresenterState>) -> Result<bool, String> {
+pub async fn pp_is_connected(state: crate::app::State<ProPresenterState>) -> Result<bool, String> {
     Ok(state.lock().await.is_some())
 }
 
@@ -165,10 +162,9 @@ pub async fn pp_is_connected(state: tauri::State<'_, ProPresenterState>) -> Resu
 // Generic REST passthrough (GET / PUT / DELETE)
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
 pub async fn pp_get(
     path: String,
-    state: tauri::State<'_, ProPresenterState>,
+    state: crate::app::State<ProPresenterState>,
 ) -> Result<serde_json::Value, String> {
     let (client, base) = current_config(&state).await?;
     let url = format!("{}/v1/{}", base, path.trim_start_matches('/'));
@@ -181,11 +177,10 @@ pub async fn pp_get(
         .or(Ok(serde_json::Value::Null))
 }
 
-#[tauri::command]
 pub async fn pp_put(
     path: String,
     body: Option<serde_json::Value>,
-    state: tauri::State<'_, ProPresenterState>,
+    state: crate::app::State<ProPresenterState>,
 ) -> Result<(), String> {
     let (client, base) = current_config(&state).await?;
     let url = format!("{}/v1/{}", base, path.trim_start_matches('/'));
@@ -197,10 +192,9 @@ pub async fn pp_put(
     ensure_ok(resp)
 }
 
-#[tauri::command]
 pub async fn pp_delete(
     path: String,
-    state: tauri::State<'_, ProPresenterState>,
+    state: crate::app::State<ProPresenterState>,
 ) -> Result<(), String> {
     let (client, base) = current_config(&state).await?;
     let url = format!("{}/v1/{}", base, path.trim_start_matches('/'));
@@ -227,8 +221,7 @@ fn ensure_ok(resp: reqwest::Response) -> Result<(), String> {
 
 macro_rules! get_cmd {
     ($name:ident, $path:expr) => {
-        #[tauri::command]
-        pub async fn $name(state: tauri::State<'_, ProPresenterState>) -> Result<(), String> {
+        pub async fn $name(state: crate::app::State<ProPresenterState>) -> Result<(), String> {
             let (client, base) = current_config(&state).await?;
             let resp = client
                 .get(format!("{}{}", base, $path))
@@ -246,10 +239,9 @@ get_cmd!(pp_trigger_previous, "/v1/trigger/previous");
 /// Generic GET-based ProPresenter action (slide/prop trigger, clears, …). The
 /// frontend routes all "do this now" actions through here; returns an error on
 /// a non-success status so failures surface instead of silently doing nothing.
-#[tauri::command]
 pub async fn pp_action(
     path: String,
-    state: tauri::State<'_, ProPresenterState>,
+    state: crate::app::State<ProPresenterState>,
 ) -> Result<(), String> {
     let (client, base) = current_config(&state).await?;
     let url = format!("{}/v1/{}", base, path.trim_start_matches('/'));
@@ -260,10 +252,9 @@ pub async fn pp_action(
     Ok(())
 }
 
-#[tauri::command]
 pub async fn pp_clear_layer(
     layer: String,
-    state: tauri::State<'_, ProPresenterState>,
+    state: crate::app::State<ProPresenterState>,
 ) -> Result<(), String> {
     let (client, base) = current_config(&state).await?;
     let resp = client
@@ -274,10 +265,9 @@ pub async fn pp_clear_layer(
     ensure_ok(resp)
 }
 
-#[tauri::command]
 pub async fn pp_trigger_macro(
     id: String,
-    state: tauri::State<'_, ProPresenterState>,
+    state: crate::app::State<ProPresenterState>,
 ) -> Result<(), String> {
     let (client, base) = current_config(&state).await?;
     let resp = client
@@ -288,10 +278,9 @@ pub async fn pp_trigger_macro(
     ensure_ok(resp)
 }
 
-#[tauri::command]
 pub async fn pp_trigger_look(
     id: String,
-    state: tauri::State<'_, ProPresenterState>,
+    state: crate::app::State<ProPresenterState>,
 ) -> Result<(), String> {
     let (client, base) = current_config(&state).await?;
     let resp = client
@@ -302,11 +291,10 @@ pub async fn pp_trigger_look(
     ensure_ok(resp)
 }
 
-#[tauri::command]
 pub async fn pp_timer_op(
     id: String,
     op: String, // "start" | "stop" | "reset"
-    state: tauri::State<'_, ProPresenterState>,
+    state: crate::app::State<ProPresenterState>,
 ) -> Result<(), String> {
     let (client, base) = current_config(&state).await?;
     let resp = client
@@ -322,10 +310,9 @@ pub async fn pp_timer_op(
     ensure_ok(resp)
 }
 
-#[tauri::command]
 pub async fn pp_set_stage_message(
     message: String,
-    state: tauri::State<'_, ProPresenterState>,
+    state: crate::app::State<ProPresenterState>,
 ) -> Result<(), String> {
     let (client, base) = current_config(&state).await?;
     let resp = client
@@ -337,9 +324,8 @@ pub async fn pp_set_stage_message(
     ensure_ok(resp)
 }
 
-#[tauri::command]
 pub async fn pp_clear_stage_message(
-    state: tauri::State<'_, ProPresenterState>,
+    state: crate::app::State<ProPresenterState>,
 ) -> Result<(), String> {
     let (client, base) = current_config(&state).await?;
     let resp = client
@@ -351,12 +337,11 @@ pub async fn pp_clear_stage_message(
 }
 
 /// Fetch a slide thumbnail and return it as a base64 data URL.
-#[tauri::command]
 pub async fn pp_thumbnail(
     uuid: String,
     index: u32,
     quality: Option<u32>,
-    state: tauri::State<'_, ProPresenterState>,
+    state: crate::app::State<ProPresenterState>,
 ) -> Result<String, String> {
     let (client, base) = current_config(&state).await?;
     let q = quality.unwrap_or(400);
@@ -381,13 +366,12 @@ pub async fn pp_thumbnail(
 /// arrangement (the order we display), and it doesn't depend on the
 /// presentation's current_arrangement state — so the image always matches the
 /// slide we show. Returns a base64 data URL.
-#[tauri::command]
 pub async fn pp_playlist_thumbnail(
     playlist_id: String,
     item_index: u32,
     cue_index: u32,
     quality: Option<u32>,
-    state: tauri::State<'_, ProPresenterState>,
+    state: crate::app::State<ProPresenterState>,
 ) -> Result<String, String> {
     let (client, base) = current_config(&state).await?;
     let q = quality.unwrap_or(400);
@@ -605,9 +589,8 @@ impl JsonChunker {
 // web clients never execute this file).
 // ---------------------------------------------------------------------------
 
-pub fn spawn_lobby_auto(app: tauri::AppHandle) {
-    use tauri::Manager;
-    tauri::async_runtime::spawn(async move {
+pub fn spawn_lobby_auto(app: AppHandle) {
+    tokio::spawn(async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             let (playlist, index) = {
@@ -647,9 +630,8 @@ pub fn spawn_lobby_auto(app: tauri::AppHandle) {
 // loop's tap:<keyword> notes went stale ten seconds in. Poll the index and
 // feed the same handler; it dedupes, so re-asserting an unchanged slide is
 // free.
-pub fn spawn_announcement_poll(app: tauri::AppHandle) {
-    use tauri::Manager;
-    tauri::async_runtime::spawn(async move {
+pub fn spawn_announcement_poll(app: AppHandle) {
+    tokio::spawn(async move {
         let mut n: u32 = 0;
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;

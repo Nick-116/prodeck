@@ -2,7 +2,7 @@ use rosc::{OscPacket, OscType};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use crate::app::AppHandle;
 
 pub struct OscInner {
     pub running: AtomicBool,
@@ -18,10 +18,9 @@ impl OscInner {
 
 pub type OscState = Arc<OscInner>;
 
-#[tauri::command]
 pub async fn start_osc(
     port: u16,
-    state: tauri::State<'_, OscState>,
+    state: crate::app::State<OscState>,
     app: AppHandle,
 ) -> Result<(), String> {
     // Stop any existing listener first.
@@ -56,15 +55,13 @@ pub async fn start_osc(
     Ok(())
 }
 
-#[tauri::command]
-pub fn stop_osc(state: tauri::State<'_, OscState>) {
+pub fn stop_osc(state: crate::app::State<OscState>) {
     state.running.store(false, Ordering::Release);
 }
 
 /// Push the current key to a rig on the LAN as OSC: `/key <name> <pc>` and
 /// `/key/pc <pc>` (pc = pitch class 0–11). Connectionless UDP, fire-and-forget —
 /// a bridge (Companion / a script) on the other PC maps it to the rig.
-#[tauri::command]
 pub async fn osc_send_key(host: String, port: u16, name: String, pc: i32) -> Result<(), String> {
     use rosc::{encoder, OscMessage};
     let sock = tokio::net::UdpSocket::bind(("0.0.0.0", 0))
@@ -117,4 +114,45 @@ fn osc_arg_to_json(arg: &OscType) -> serde_json::Value {
         OscType::Char(c) => Value::from(c.to_string()),
         _ => Value::Null,
     }
+}
+
+// ---------------------------------------------------------------- Core dispatch helpers
+
+/// Start the OSC listener on `port`. Called directly by the web dispatch table
+/// which holds `&OscState` rather than going through `crate::app::State`.
+pub async fn start_core(port: u16, osc: &OscState, app: AppHandle) -> Result<(), String> {
+    osc.running.store(false, Ordering::Release);
+    tokio::time::sleep(Duration::from_millis(80)).await;
+
+    let sock = tokio::net::UdpSocket::bind(("0.0.0.0", port))
+        .await
+        .map_err(|e| format!("OSC bind failed on port {port}: {e}"))?;
+
+    osc.running.store(true, Ordering::Release);
+    let running = osc.clone();
+    let app2 = app.clone();
+
+    tokio::spawn(async move {
+        app2.emit("osc:listening", port).ok();
+        let mut buf = vec![0u8; 65_535];
+        while running.running.load(Ordering::Acquire) {
+            match tokio::time::timeout(Duration::from_millis(500), sock.recv_from(&mut buf)).await {
+                Ok(Ok((size, _addr))) => {
+                    if let Ok((_, packet)) = rosc::decoder::decode_udp(&buf[..size]) {
+                        handle_packet(&app2, packet);
+                    }
+                }
+                Ok(Err(_)) => break,
+                Err(_) => {}
+            }
+        }
+        app2.emit("osc:stopped", ()).ok();
+    });
+
+    Ok(())
+}
+
+/// Stop the OSC listener. Called directly by the web dispatch table.
+pub fn stop_core(osc: &OscState) {
+    osc.running.store(false, Ordering::Release);
 }

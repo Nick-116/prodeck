@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use crate::app::AppHandle;
 
 // 5 min, halved from phase 1's 10: it bounds how much chat a hard power-off
 // can lose upward, and the payload is tiny.
@@ -160,7 +160,7 @@ async fn push_once(app: &AppHandle) {
 }
 
 pub fn spawn_edge_push(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         // First push soon after launch, then a steady heartbeat.
         tokio::time::sleep(Duration::from_secs(15)).await;
         loop {

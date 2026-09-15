@@ -16,7 +16,7 @@
 
 use serde_json::{json, Value};
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager};
+use crate::app::AppHandle;
 
 pub const LABEL: &str = "com.prodeck.watchdog";
 
@@ -505,40 +505,28 @@ pub fn status_value(app: &AppHandle) -> Value {
     })
 }
 
-#[tauri::command]
-pub fn keepalive_status(app: AppHandle) -> Value {
-    status_value(&app)
+pub fn keepalive_status(app: &AppHandle) -> Value {
+    status_value(app)
 }
 
-#[tauri::command]
-pub fn keepalive_install(app: AppHandle) -> Result<Value, String> {
-    let exe = current_exe();
-    if !platform::in_install_dir(&exe) {
-        return Err(platform::INSTALL_HINT.into());
-    }
-    platform::install(&exe)?;
-    crate::diag::log(format!("[keepalive] installed for {exe}"));
-    Ok(status_value(&app))
+/// Dispatch-facing alias for status.
+pub fn status_core(app: &AppHandle) -> Value {
+    status_value(app)
 }
 
-#[tauri::command]
-pub fn keepalive_uninstall(app: AppHandle) -> Result<Value, String> {
-    platform::uninstall()?;
-    crate::diag::log("[keepalive] removed");
-    Ok(status_value(&app))
+/// Not available in Docker mode — use Docker/systemd for process management.
+pub fn keepalive_install(_app: &AppHandle) -> Result<Value, String> {
+    Err("Use Docker or your system's process manager for ProDeck lifecycle management".into())
 }
 
-/// Hand this process to the supervisor now, so it owns the app from here.
-#[tauri::command]
-pub fn keepalive_relaunch(app: AppHandle) -> Result<(), String> {
-    platform::relaunch()?;
-    crate::diag::log("[keepalive] relaunching under the watchdog");
-    let _ = app;
-    std::thread::spawn(|| {
-        std::thread::sleep(std::time::Duration::from_millis(400));
-        std::process::exit(0);
-    });
-    Ok(())
+/// Not available in Docker mode — use Docker/systemd for process management.
+pub fn keepalive_uninstall(_app: &AppHandle) -> Result<Value, String> {
+    Err("Use Docker or your system's process manager for ProDeck lifecycle management".into())
+}
+
+/// Not available in Docker mode — use Docker/systemd for process management.
+pub fn keepalive_relaunch(_app: &AppHandle) -> Result<(), String> {
+    Err("Use Docker or your system's process manager to restart ProDeck".into())
 }
 
 pub fn set_keep_awake(app: &AppHandle, on: bool) {
@@ -551,9 +539,8 @@ pub fn set_keep_awake(app: &AppHandle, on: bool) {
     }
 }
 
-#[tauri::command]
-pub fn keep_awake_set(on: bool, app: AppHandle) -> Result<Value, String> {
-    set_keep_awake(&app, on);
+pub fn keep_awake_set(on: bool, app: &AppHandle) -> Result<Value, String> {
+    set_keep_awake(app, on);
     {
         let st = app.state::<crate::settings::SettingsState>();
         let to_save = {
@@ -563,5 +550,5 @@ pub fn keep_awake_set(on: bool, app: AppHandle) -> Result<Value, String> {
         };
         crate::settings::save(&to_save)?;
     }
-    Ok(status_value(&app))
+    Ok(status_value(app))
 }

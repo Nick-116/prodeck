@@ -5,8 +5,7 @@
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
-use tauri::{AppHandle, Manager};
-use tauri_plugin_opener::OpenerExt;
+use crate::app::AppHandle;
 
 const RING: usize = 400;
 static LOG: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
@@ -141,8 +140,7 @@ fn sh(cmd: &str, args: &[&str]) -> String {
 /// Build the support bundle. `client` is whatever the frontend knows that the
 /// backend doesn't (connection lights, page, browser/desktop) — passed in as
 /// JSON and included verbatim, so keep it non-secret on the calling side.
-#[tauri::command]
-pub fn diag_bundle(client: Value, app: AppHandle) -> Result<String, String> {
+pub fn bundle_core(client: Value, app: &AppHandle) -> Result<String, String> {
     let settings_state = app.state::<crate::settings::SettingsState>();
     let mut settings = {
         let s = settings_state.lock().unwrap_or_else(|p| p.into_inner());
@@ -151,10 +149,10 @@ pub fn diag_bundle(client: Value, app: AppHandle) -> Result<String, String> {
     redact_settings(&mut settings);
 
     let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
-    let keep = crate::keepalive::status_value(&app);
+    let keep = crate::keepalive::status_value(app);
     let bundle = json!({
         "prodeck": {
-            "version": app.package_info().version.to_string(),
+            "version": env!("CARGO_PKG_VERSION"),
             "exe": exe,
             "data_dir": crate::settings::data_dir_display(),
         },
@@ -167,11 +165,14 @@ pub fn diag_bundle(client: Value, app: AppHandle) -> Result<String, String> {
     Ok(serde_json::to_string_pretty(&bundle).map_err(|e| e.to_string())?)
 }
 
-/// Open a pre-filled GitHub issue. The bundle itself is too long for a URL,
-/// so the body carries the summary + a short system line and asks the user to
-/// paste the bundle (the frontend has already put it on the clipboard).
-#[tauri::command]
-pub fn diag_open_issue(repo: String, title: String, summary: String, system_line: String, app: AppHandle) -> Result<(), String> {
+/// Dispatch-facing alias.
+pub fn diag_bundle(client: Value, app: &AppHandle) -> Result<String, String> {
+    bundle_core(client, app)
+}
+
+/// Build a GitHub issue URL with a pre-filled body. The caller opens it.
+/// URL opening is not available in Docker mode.
+pub fn diag_open_issue(repo: String, title: String, summary: String, system_line: String) -> Result<String, String> {
     let body = format!(
         "**What happened**\n{summary}\n\n**System**\n{system_line}\n\n**Diagnostics**\n<details><summary>Paste the bundle here (it is on your clipboard; secrets are already redacted)</summary>\n\n```json\n\n```\n</details>\n"
     );
@@ -181,52 +182,21 @@ pub fn diag_open_issue(repo: String, title: String, summary: String, system_line
         urlencoding::encode(&title),
         urlencoding::encode(&body)
     );
-    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+    Ok(url)
 }
 
 /// Recent log lines for the Settings → Logs view.
-#[tauri::command]
+pub fn recent_log(n: usize) -> Vec<String> {
+    recent(n)
+}
+
 pub fn diag_recent_log(n: Option<usize>) -> Vec<String> {
     recent(n.unwrap_or(200))
 }
 
-/// A filesystem path as a URL the OS will actually accept.
-///
-/// `format!("file://{path}")` is right on macOS and wrong on Windows: it yields
-/// `file://C:\Users\...`, where "C:" reads as the host name, so every in-app
-/// help link did nothing at all. Windows needs three slashes and forward
-/// slashes. The characters that would otherwise end the path early are escaped
-/// too — `#` in particular, since an anchor is appended straight after this.
-fn file_url(p: &std::path::Path) -> String {
-    let raw = p.display().to_string();
-    #[cfg(windows)]
-    let raw = format!("/{}", raw.replace('\\', "/"));
-    let mut out = String::from("file://");
-    for c in raw.chars() {
-        match c {
-            ' ' => out.push_str("%20"),
-            '#' => out.push_str("%23"),
-            '?' => out.push_str("%3F"),
-            '%' => out.push_str("%25"),
-            _ => out.push(c),
-        }
-    }
-    out
-}
-
-/// Open the bundled Adopter's Guide at a section (offline), falling back to
-/// the published copy when the resource isn't found (e.g. `tauri dev`).
-#[tauri::command]
-pub fn help_open(section: Option<String>, app: AppHandle) -> Result<(), String> {
+/// Return the Adopter's Guide URL for a section. URL opening is not available in Docker mode.
+pub fn help_open(section: Option<String>) -> Result<String, String> {
     let anchor = section.map(|s| format!("#{}", s.trim_start_matches('#'))).unwrap_or_default();
-    let local = app
-        .path()
-        .resolve("docs/ADOPTERS_GUIDE.html", tauri::path::BaseDirectory::Resource)
-        .ok()
-        .filter(|p| p.exists());
-    let url = match local {
-        Some(p) => format!("{}{}", file_url(&p), anchor),
-        None => format!("https://whiteoakmedia.github.io/prodeck/ADOPTERS_GUIDE.html{anchor}"),
-    };
-    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+    let url = format!("https://whiteoakmedia.github.io/prodeck/ADOPTERS_GUIDE.html{anchor}");
+    Ok(url)
 }

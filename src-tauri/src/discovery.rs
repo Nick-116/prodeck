@@ -27,7 +27,6 @@ fn kind_for(service_type: &str) -> &'static str {
 
 /// Browse the local network for ProPresenter, Stage Display and NDI services.
 /// Collects everything that resolves within `secs` seconds.
-#[tauri::command]
 pub async fn discover_services(secs: Option<u64>) -> Result<Vec<DiscoveredService>, String> {
     let window = Duration::from_secs(secs.unwrap_or(4));
     let service_types = [
@@ -91,4 +90,9 @@ pub async fn discover_services(secs: Option<u64>) -> Result<Vec<DiscoveredServic
 
     let map = found.lock().await;
     Ok(map.values().cloned().collect())
+}
+
+/// No-argument variant called by the web dispatch table (uses the default 4-second window).
+pub async fn discover_services_core() -> Result<Vec<DiscoveredService>, String> {
+    discover_services(None).await
 }

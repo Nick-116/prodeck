@@ -14,7 +14,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager};
+use crate::app::AppHandle;
 
 // ---------------------------------------------------------------- FFI types
 
@@ -260,7 +260,6 @@ type FrameSlot = Arc<Mutex<Option<Arc<Vec<u8>>>>>;
 
 // ---------------------------------------------------------------- Commands
 
-#[tauri::command]
 pub async fn ndi_discover_sources(app: AppHandle) -> Result<Vec<NdiSource>, String> {
     if ndi().is_some() {
         let sources = tokio::task::spawn_blocking(discover_ndi)
@@ -301,10 +300,9 @@ async fn mdns_discover(app: &AppHandle) -> Result<Vec<NdiSource>, String> {
     Ok(sources)
 }
 
-#[tauri::command]
 pub async fn ndi_start_receiver(
     source_name: String,
-    state: tauri::State<'_, NdiState>,
+    state: crate::app::State<NdiState>,
     app: AppHandle,
 ) -> Result<u16, String> {
     start_receiver(source_name, state.inner(), &app).await
@@ -368,10 +366,9 @@ pub(crate) async fn start_receiver(
     Ok(port)
 }
 
-#[tauri::command]
 pub async fn ndi_stop_receiver(
     source_name: Option<String>,
-    state: tauri::State<'_, NdiState>,
+    state: crate::app::State<NdiState>,
 ) -> Result<(), String> {
     stop_receiver(source_name, state.inner()).await
 }

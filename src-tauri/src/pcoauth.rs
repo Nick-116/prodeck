@@ -44,7 +44,7 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use crate::app::AppHandle;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -255,12 +255,19 @@ pub struct BeginResult {
     pub url: String,
 }
 
-#[tauri::command]
 pub async fn pco_oauth_begin(
     app: AppHandle,
-    settings: tauri::State<'_, SettingsState>,
+    settings: crate::app::State<SettingsState>,
 ) -> Result<BeginResult, String> {
-    let cid = client_id(&settings).ok_or_else(|| {
+    let url = oauth_begin_core(app).await?;
+    Ok(BeginResult { url })
+}
+
+/// Start the OAuth flow: bind the loopback listener, build the authorize URL,
+/// spawn the callback waiter, and return the URL for the caller to open.
+pub async fn oauth_begin_core(app: AppHandle) -> Result<String, String> {
+    let settings = app.state::<SettingsState>();
+    let cid = client_id(settings.inner()).ok_or_else(|| {
         format!(
             "No Planning Center application is configured yet.\n\n\
              A Planning Center **Organization Administrator** can create one at \
@@ -292,7 +299,7 @@ pub async fn pco_oauth_begin(
     );
 
     let app2 = app.clone();
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         let result = match wait_for_callback(listener, &state).await {
             Ok(code) => finish(&cid, &code, &pkce, &redirect).await,
             Err(e) => Err(e),
@@ -307,9 +314,7 @@ pub async fn pco_oauth_begin(
         }
     });
 
-    use tauri_plugin_opener::OpenerExt;
-    let _ = app.opener().open_url(url.clone(), None::<&str>);
-    Ok(BeginResult { url })
+    Ok(url)
 }
 
 async fn bind() -> Result<(TcpListener, u16), String> {
@@ -571,9 +576,12 @@ pub struct OauthStatus {
     pub redirect_uris: Vec<String>,
 }
 
-#[tauri::command]
-pub fn pco_oauth_status(settings: tauri::State<'_, SettingsState>) -> OauthStatus {
-    let cid = client_id(&settings);
+pub fn pco_oauth_status(settings: crate::app::State<SettingsState>) -> OauthStatus {
+    oauth_status_inner(settings.inner())
+}
+
+fn oauth_status_inner(settings: &SettingsState) -> OauthStatus {
+    let cid = client_id(settings);
     let own_app = {
         let s = settings.lock().unwrap_or_else(|p| p.into_inner());
         !s.pco_client_id.clone().unwrap_or_default().trim().is_empty()
@@ -589,12 +597,17 @@ pub fn pco_oauth_status(settings: tauri::State<'_, SettingsState>) -> OauthStatu
     }
 }
 
+pub fn oauth_status_core(app: AppHandle) -> serde_json::Value {
+    let settings = app.state::<SettingsState>();
+    let s = oauth_status_inner(settings.inner());
+    serde_json::to_value(&s).unwrap_or(serde_json::Value::Null)
+}
+
 /// Disconnect: tell Planning Center to drop the token, then forget it here.
 /// Revoking first matters — a token we merely forgot would stay live on their
 /// side for up to two hours and keep showing in the church's connected apps.
-#[tauri::command]
-pub async fn pco_oauth_disconnect(settings: tauri::State<'_, SettingsState>) -> Result<(), String> {
-    let (t, cid) = (load(), client_id(&settings));
+pub async fn pco_oauth_disconnect(settings: crate::app::State<SettingsState>) -> Result<(), String> {
+    let (t, cid) = (load(), client_id(settings.inner()));
     if let (Some(t), Some(cid)) = (t, cid) {
         if let Ok(c) = http_client() {
             let _ = c
@@ -611,6 +624,28 @@ pub async fn pco_oauth_disconnect(settings: tauri::State<'_, SettingsState>) -> 
     }
     store(None);
     Ok(())
+}
+
+pub fn oauth_disconnect_core(app: AppHandle) {
+    let settings = app.state::<SettingsState>();
+    let (t, cid) = (load(), client_id(settings.inner()));
+    if let (Some(t), Some(cid)) = (t, cid) {
+        tokio::spawn(async move {
+            if let Ok(c) = http_client() {
+                let _ = c
+                    .post(REVOKE)
+                    .header("User-Agent", "ProDeck")
+                    .form(&[
+                        ("token", t.refresh.as_str()),
+                        ("token_type_hint", "refresh_token"),
+                        ("client_id", cid.as_str()),
+                    ])
+                    .send()
+                    .await;
+            }
+        });
+    }
+    store(None);
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@ use crate::settings::SettingsState;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager};
+use crate::app::AppHandle;
 
 const PCO_BASE: &str = "https://api.planningcenteronline.com";
 
@@ -380,10 +380,9 @@ mod cred_tests {
 }
 
 /// Generic authenticated GET against the Planning Center API.
-#[tauri::command]
 pub async fn pco_get(
     path: String,
-    settings: tauri::State<'_, SettingsState>,
+    settings: crate::app::State<SettingsState>,
 ) -> Result<serde_json::Value, String> {
     request_coded_for(&settings, &path).await.map_err(|(code, msg)| coded_msg(code, &msg))
 }
@@ -450,9 +449,8 @@ fn coded_msg(code: u16, msg: &str) -> String {
 }
 
 /// Verify credentials by fetching the authenticated user.
-#[tauri::command]
 pub async fn pco_test(
-    settings: tauri::State<'_, SettingsState>,
+    settings: crate::app::State<SettingsState>,
 ) -> Result<serde_json::Value, String> {
     request_for(&settings, "people/v2/me").await
 }
@@ -480,12 +478,11 @@ pub(crate) async fn pco_post(auth: &Auth, path: &str) -> Result<serde_json::Valu
 }
 
 /// Drive Services LIVE: step the live controller forward/back or take control.
-#[tauri::command]
 pub async fn pco_live_action(
     service_type_id: String,
     plan_id: String,
     action: String,
-    settings: tauri::State<'_, SettingsState>,
+    settings: crate::app::State<SettingsState>,
 ) -> Result<serde_json::Value, String> {
     let allowed = ["go_to_next_item", "go_to_previous_item", "toggle_control"];
     if !allowed.contains(&action.as_str()) {
@@ -504,17 +501,16 @@ pub async fn pco_live_action(
 /// PCO ignores `go_to_next_item` unless someone has taken control, and an
 /// uncontrolled plan answers 404 here — which is the normal state, not an
 /// error, so it maps to a null controller rather than failing.
-#[tauri::command]
-pub async fn pco_live_controller(
-    service_type_id: String,
-    plan_id: String,
-    settings: tauri::State<'_, SettingsState>,
+pub async fn live_controller_core(
+    auth: &Auth,
+    st_id: &str,
+    plan_id: &str,
 ) -> Result<serde_json::Value, String> {
     let path = format!(
         "services/v2/service_types/{}/plans/{}/live/controller",
-        service_type_id, plan_id
+        st_id, plan_id
     );
-    let (controller_id, controller_name) = match request_coded_for(&settings, &path).await {
+    let (controller_id, controller_name) = match pco_request_coded(auth, &path).await {
         Ok(v) => (
             v.pointer("/data/id").and_then(|x| x.as_str()).map(str::to_string),
             v.pointer("/data/attributes/full_name")
@@ -526,7 +522,7 @@ pub async fn pco_live_controller(
         Err((404, _)) => (None, None),
         Err((_, msg)) => return Err(msg),
     };
-    let me_id = request_for(&settings, "people/v2/me")
+    let me_id = pco_request(auth, "people/v2/me")
         .await
         .ok()
         .and_then(|v| v.pointer("/data/id").and_then(|x| x.as_str()).map(str::to_string));
@@ -535,6 +531,15 @@ pub async fn pco_live_controller(
         "controllerName": controller_name,
         "meId": me_id,
     }))
+}
+
+pub async fn pco_live_controller(
+    service_type_id: String,
+    plan_id: String,
+    settings: crate::app::State<SettingsState>,
+) -> Result<serde_json::Value, String> {
+    let a = auth(settings.inner()).await?;
+    live_controller_core(&a, &service_type_id, &plan_id).await
 }
 
 fn items_path(st: &str, plan: &str) -> String {
@@ -562,24 +567,19 @@ fn live_path(st: &str, plan: &str) -> String {
 
 /// Begin polling a plan: LIVE current item every tick, plan items + team less
 /// often. Emits `pco:live`, `pco:items`, `pco:team`.
-#[tauri::command]
-pub async fn pco_start_sync(
+pub async fn start_sync_core(
+    pco: &PcoState,
+    _initial_auth: Auth,
     service_type_id: String,
     plan_id: String,
-    settings: tauri::State<'_, SettingsState>,
-    state: tauri::State<'_, PcoState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    // Fail fast if there's no credential at all, so pressing Start reports the
-    // problem instead of spawning a task that quietly fetches nothing.
-    auth(&settings).await?;
-
     // Claim this sync as the latest; any task from a previous plan will see a
     // newer epoch and stop, so two weeks can't poll/emit at once.
-    let my_epoch = state.epoch.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
-    state.syncing.store(true, Ordering::Release);
+    let my_epoch = pco.epoch.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+    pco.syncing.store(true, Ordering::Release);
 
-    let running = state.inner().clone();
+    let running = pco.clone();
     let app2 = app.clone();
     // New plan: forget last week's team until this plan's first fetch lands,
     // so the deck can't page last Sunday's crew during the hand-off.
@@ -692,28 +692,44 @@ pub async fn pco_start_sync(
     Ok(())
 }
 
-#[tauri::command]
-pub fn pco_stop_sync(state: tauri::State<'_, PcoState>) {
-    state.syncing.store(false, Ordering::Release);
+pub async fn pco_start_sync(
+    service_type_id: String,
+    plan_id: String,
+    settings: crate::app::State<SettingsState>,
+    state: crate::app::State<PcoState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    // Fail fast if there's no credential at all, so pressing Start reports the
+    // problem instead of spawning a task that quietly fetches nothing.
+    let a = auth(settings.inner()).await?;
+    start_sync_core(state.inner(), a, service_type_id, plan_id, app).await
+}
+
+pub fn stop_sync_core(pco: &PcoState) {
+    pco.syncing.store(false, Ordering::Release);
+}
+
+pub fn pco_stop_sync(state: crate::app::State<PcoState>) {
+    stop_sync_core(state.inner());
 }
 
 /// Adjust how often the LIVE current-item is polled (ms). Lower = snappier
 /// follow / auto-advance; higher = quieter when idle.
-#[tauri::command]
-pub fn pco_set_live_interval(ms: u64, state: tauri::State<'_, PcoState>) {
-    state
-        .live_interval_ms
-        .store(ms.clamp(500, 30_000), Ordering::Release);
+pub fn set_live_interval_core(pco: &PcoState, ms: u64) {
+    pco.live_interval_ms.store(ms.clamp(500, 30_000), Ordering::Release);
+}
+
+pub fn pco_set_live_interval(ms: u64, state: crate::app::State<PcoState>) {
+    set_live_interval_core(state.inner(), ms);
 }
 
 /// Resolve a Planning Center attachment (chord chart, lead sheet…) to its
 /// downloadable URL. POST /attachments/{id}/open returns a short-lived link
 /// the phone can fetch straight from PCO's CDN. Member-tier via the gateway:
 /// worship phones open their own charts.
-#[tauri::command]
 pub async fn pco_attachment_open(
     id: String,
-    settings: tauri::State<'_, SettingsState>,
+    settings: crate::app::State<SettingsState>,
 ) -> Result<serde_json::Value, String> {
     let a = auth(&settings).await?;
     pco_post(&a, &format!("services/v2/attachments/{id}/open")).await
@@ -722,11 +738,10 @@ pub async fn pco_attachment_open(
 /// Raw chord chart + lyrics for an arrangement — the in-app chart renderer's
 /// data. Member-tier via the gateway: worship phones draw their own charts
 /// (PCO's generated PDFs are login-walled web pages, so we render instead).
-#[tauri::command]
 pub async fn pco_chord_chart(
     song_id: String,
     arrangement_id: String,
-    settings: tauri::State<'_, SettingsState>,
+    settings: crate::app::State<SettingsState>,
 ) -> Result<serde_json::Value, String> {
     if !song_id.chars().all(|c| c.is_ascii_digit())
         || !arrangement_id.chars().all(|c| c.is_ascii_digit())

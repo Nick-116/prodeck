@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use crate::settings::SettingsState;
-use tauri::{AppHandle, Emitter};
+use crate::app::AppHandle;
 
 /// Most recent RMS level (f32 bits) + when it was measured, for pull-style
 /// readers like the Stream Deck's SPL key. Zeroed meaning: never measured.
@@ -258,7 +258,6 @@ impl AudioInner {
 
 pub type AudioState = Arc<AudioInner>;
 
-#[tauri::command]
 pub fn list_audio_inputs() -> Result<Vec<String>, String> {
     let host = cpal::default_host();
     let mut names = Vec::new();
@@ -272,7 +271,6 @@ pub fn list_audio_inputs() -> Result<Vec<String>, String> {
     Ok(names)
 }
 
-#[tauri::command]
 pub fn default_audio_input() -> Option<String> {
     cpal::default_host()
         .default_input_device()
@@ -291,11 +289,14 @@ fn find_device(name: &Option<String>) -> Option<cpal::Device> {
     }
 }
 
-#[tauri::command]
-pub fn start_audio_capture(
+/// Inner capture implementation that operates on a raw `&AudioState` reference.
+/// Both the command wrapper and the core wrapper delegate here so the cpal
+/// thread setup lives in exactly one place.
+fn start_audio_capture_inner(
     device: Option<String>,
-    state: tauri::State<'_, AudioState>,
-    settings: tauri::State<'_, SettingsState>,
+    audio: &AudioState,
+    measure_channels: Vec<u32>,
+    overflow_channels: Vec<u32>,
     app: AppHandle,
 ) -> Result<(), String> {
     let dev = find_device(&device).ok_or_else(|| "No matching input device".to_string())?;
@@ -304,17 +305,17 @@ pub fn start_audio_capture(
         .map_err(|e| format!("input config: {e}"))?;
 
     // Stop any prior capture.
-    state.running.store(false, Ordering::Release);
+    audio.running.store(false, Ordering::Release);
     std::thread::sleep(std::time::Duration::from_millis(80));
 
     let sample_rate = config.sample_rate().0;
     let channels = config.channels() as usize;
-    state.sample_rate.store(sample_rate, Ordering::Relaxed);
-    state.channels.store(channels as u32, Ordering::Relaxed);
-    state.mono.lock().unwrap_or_else(|p| p.into_inner()).clear();
-    state.analysis.lock().unwrap_or_else(|p| p.into_inner()).clear();
-    *state.device_name.lock().unwrap_or_else(|p| p.into_inner()) = dev.name().ok();
-    state.running.store(true, Ordering::Release);
+    audio.sample_rate.store(sample_rate, Ordering::Relaxed);
+    audio.channels.store(channels as u32, Ordering::Relaxed);
+    audio.mono.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    audio.analysis.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    *audio.device_name.lock().unwrap_or_else(|p| p.into_inner()) = dev.name().ok();
+    audio.running.store(true, Ordering::Release);
 
     // Channel routing for multi-channel (Dante) inputs: settings hold 1-based
     // channel numbers; map to 0-based indices clamped to the device. Empty
@@ -325,16 +326,11 @@ pub fn start_audio_capture(
             .filter(|&i| i < channels)
             .collect()
     };
-    let (measure_idx, overflow_idx) = {
-        let s = settings.lock().unwrap_or_else(|p| p.into_inner());
-        (
-            Arc::new(to_idx(&s.audio_measure_channels)),
-            Arc::new(to_idx(&s.audio_overflow_channels)),
-        )
-    };
-    let overflow_tx = state.overflow_tx.clone();
+    let measure_idx = Arc::new(to_idx(&measure_channels));
+    let overflow_idx = Arc::new(to_idx(&overflow_channels));
+    let overflow_tx = audio.overflow_tx.clone();
 
-    let inner = state.inner().clone();
+    let inner = audio.clone();
     let app2 = app.clone();
     let sample_format = config.sample_format();
     let stream_config: cpal::StreamConfig = config.into();
@@ -533,7 +529,7 @@ pub fn start_audio_capture(
 
     // Spectrum analyzer thread (FFT -> log bands), runs while capturing.
     {
-        let inner = state.inner().clone();
+        let inner = audio.clone();
         let app = app.clone();
         std::thread::spawn(move || rta_loop(inner, app));
     }
@@ -541,14 +537,25 @@ pub fn start_audio_capture(
     Ok(())
 }
 
-#[tauri::command]
-pub fn stop_audio_capture(state: tauri::State<'_, AudioState>) {
+pub fn start_audio_capture(
+    device: Option<String>,
+    state: crate::app::State<AudioState>,
+    settings: crate::app::State<SettingsState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let (measure_channels, overflow_channels) = {
+        let s = settings.lock().unwrap_or_else(|p| p.into_inner());
+        (s.audio_measure_channels.clone(), s.audio_overflow_channels.clone())
+    };
+    start_audio_capture_inner(device, state.inner(), measure_channels, overflow_channels, app)
+}
+
+pub fn stop_audio_capture(state: crate::app::State<AudioState>) {
     state.running.store(false, Ordering::Release);
 }
 
 /// Number of input channels the given device exposes — used by the channel
 /// routing UI (e.g. an 8-channel Dante input).
-#[tauri::command]
 pub fn audio_input_channels(device: Option<String>) -> u16 {
     find_device(&device)
         .and_then(|d| d.default_input_config().ok())
@@ -613,4 +620,45 @@ fn compute_bands(buf: &[Complex<f32>], n: usize, sr: u32) -> Vec<f32> {
         out.push(db);
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// Core helper functions for the web dispatch table.
+// These expose the same functionality with raw-reference signatures so callers
+// that already hold an Arc<AudioInner> don't need to go through State<T>.
+// ---------------------------------------------------------------------------
+
+/// List available audio input device names.
+pub fn list_inputs_core() -> Vec<String> {
+    list_audio_inputs().unwrap_or_default()
+}
+
+/// Name of the system default input device, or None if none exists.
+pub fn default_input_core() -> Option<String> {
+    default_audio_input()
+}
+
+/// Number of input channels exposed by the named device (0 if not found).
+pub fn input_channels_core(name: &str) -> u16 {
+    audio_input_channels(Some(name.to_string()))
+}
+
+/// Start audio capture, reading channel routing from the app's SettingsState.
+pub async fn start_capture_core(
+    name: Option<String>,
+    _channels: u16,
+    audio: &AudioState,
+    app: AppHandle,
+) -> Result<(), String> {
+    let (measure_channels, overflow_channels) = {
+        let settings = app.state::<SettingsState>();
+        let s = settings.lock().unwrap_or_else(|p| p.into_inner());
+        (s.audio_measure_channels.clone(), s.audio_overflow_channels.clone())
+    };
+    start_audio_capture_inner(name, audio, measure_channels, overflow_channels, app)
+}
+
+/// Stop the running audio capture engine.
+pub fn stop_capture_core(audio: &AudioState) {
+    audio.running.store(false, Ordering::Release);
 }

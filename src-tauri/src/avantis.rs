@@ -18,7 +18,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager};
+use crate::app::AppHandle;
 
 use crate::ahmap::{self, DeskModel, SYSEX_HEADER};
 
@@ -116,8 +116,7 @@ pub fn snapshot(state: &AvantisState) -> Value {
     })
 }
 
-#[tauri::command]
-pub fn avantis_state(state: tauri::State<'_, AvantisState>) -> Value {
+pub fn avantis_state(state: crate::app::State<AvantisState>) -> Value {
     snapshot(state.inner())
 }
 
@@ -145,11 +144,10 @@ fn write_desk(state: &AvantisState, bytes: &[u8]) -> Result<(), String> {
 
 /// Mute or unmute one channel: Note On vel 7F/3F followed by Note On vel 00,
 /// exactly as the protocol prescribes.
-#[tauri::command]
 pub async fn avantis_set_mute(
     id: String,
     muted: bool,
-    state: tauri::State<'_, AvantisState>,
+    state: crate::app::State<AvantisState>,
     app: AppHandle,
 ) -> Result<(), String> {
     let st = state.inner().clone();
@@ -176,10 +174,9 @@ pub async fn avantis_set_mute(
 }
 
 /// Recall a scene (1-500): Bank Select + Program Change on the base channel.
-#[tauri::command]
 pub async fn avantis_recall_scene(
     scene: u32,
-    state: tauri::State<'_, AvantisState>,
+    state: crate::app::State<AvantisState>,
     app: AppHandle,
 ) -> Result<(), String> {
     let st = state.inner().clone();
@@ -207,11 +204,10 @@ pub async fn avantis_recall_scene(
 /// Rename one channel on the desk: SysEx op 0x03, up to 8 ASCII characters.
 /// Used to stamp this week's vocalists onto their mic channels (and the
 /// mirror channels that share the mic but process differently).
-#[tauri::command]
 pub async fn avantis_set_name(
     id: String,
     name: String,
-    state: tauri::State<'_, AvantisState>,
+    state: crate::app::State<AvantisState>,
     app: AppHandle,
 ) -> Result<(), String> {
     let clean: String = name
@@ -245,11 +241,10 @@ pub async fn avantis_set_name(
 }
 
 /// Set one fader (0-127 raw; dB = v/127*64 − 54): NRPN parameter 0x17.
-#[tauri::command]
 pub async fn avantis_set_fader(
     id: String,
     value: u8,
-    state: tauri::State<'_, AvantisState>,
+    state: crate::app::State<AvantisState>,
     app: AppHandle,
 ) -> Result<(), String> {
     let v = value.min(0x7F);
@@ -791,7 +786,7 @@ pub fn spawn_mirror(app: AppHandle) {
 /// recipients bypass the in-building broadcast filter on purpose: a tamper
 /// alert matters most when the owner is NOT in the building.
 pub fn spawn_watch_flush(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         let mut tick: u32 = 0;
         loop {
             tokio::time::sleep(Duration::from_secs(45)).await;

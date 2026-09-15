@@ -23,7 +23,7 @@ use crate::avantis::{apply_fader, apply_mute, snapshot, AvantisState};
 use rosc::{encoder, OscMessage, OscPacket, OscType};
 use serde_json::json;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager};
+use crate::app::AppHandle;
 
 /// The X32/M32 remote-control port. Fixed in the console's firmware — there is
 /// no setting for it on the desk — but `avantis_port` is offered in Settings and
@@ -249,7 +249,7 @@ pub fn apply_message(s: &mut crate::avantis::AvantisInner, addr: &str, args: &[O
 }
 
 pub fn spawn_mirror(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         let state: AvantisState = app.state::<AvantisState>().inner().clone();
         loop {
             let (enabled, host, model, port) = settings(&app);

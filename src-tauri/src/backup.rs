@@ -11,8 +11,7 @@
 use base64::Engine;
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
-use tauri_plugin_opener::OpenerExt;
+use crate::app::AppHandle;
 
 const B64: base64::engine::general_purpose::GeneralPurpose =
     base64::engine::general_purpose::STANDARD;
@@ -170,9 +169,8 @@ pub(crate) fn restore_into(dir: &Path, text: &str) -> Result<Value, String> {
     Ok(json!({ "restored": restored, "positionFiles": pos_restored }))
 }
 
-/// Write the bundle to ~/Desktop and reveal it. Returns the path.
-#[tauri::command]
-pub fn backup_export(app: AppHandle) -> Result<String, String> {
+/// Write the bundle to ~/Desktop. Returns the path.
+pub fn backup_export() -> Result<String, String> {
     let dir = crate::settings::data_dir();
     let b = bundle_from(&dir)?;
     let desk = dirs::desktop_dir().or_else(dirs::home_dir).ok_or("no home directory")?;
@@ -181,16 +179,31 @@ pub fn backup_export(app: AppHandle) -> Result<String, String> {
     let path = desk.join(format!("ProDeck-backup-{y:04}{m:02}{d:02}.json"));
     let txt = serde_json::to_string_pretty(&b).map_err(|e| e.to_string())?;
     std::fs::write(&path, txt).map_err(|e| e.to_string())?;
-    let _ = app.opener().reveal_item_in_dir(&path);
     crate::diag::log(format!("[backup] exported {}", path.display()));
     Ok(path.display().to_string())
 }
 
+/// Dispatch-facing alias (no Finder reveal in Docker mode).
+pub async fn export_core() -> Result<String, String> {
+    backup_export()
+}
+
 /// Restore from bundle text. Every replaced file is first copied to
 /// `<name>.pre-restore`; the caller relaunches so modules reload from disk.
-#[tauri::command]
 pub fn backup_import(text: String) -> Result<Value, String> {
     restore_into(&crate::settings::data_dir(), &text)
+}
+
+/// Dispatch-facing: restore then emit a reload event.
+pub async fn import_core(text: String, app: &AppHandle) -> Result<(), String> {
+    let result = restore_into(&crate::settings::data_dir(), &text)?;
+    crate::diag::log(format!(
+        "[backup] import complete: {} files, {} position guides",
+        result["restored"].as_array().map(|a| a.len()).unwrap_or(0),
+        result["positionFiles"].as_u64().unwrap_or(0),
+    ));
+    app.emit("backup:restored", result).ok();
+    Ok(())
 }
 
 /// Days since 1970-01-01 → (y, m, d). Howard Hinnant's algorithm.

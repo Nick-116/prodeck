@@ -276,29 +276,26 @@ pub(crate) async fn help_ask_core(
     Ok(out.trim().to_string())
 }
 
-// ---- Tauri command wrappers (desktop) ------------------------------------
+// ---- Command wrappers ------------------------------------
 
-#[tauri::command]
 pub async fn help_ask(
     question: String,
     context: String,
-    settings: tauri::State<'_, SettingsState>,
+    settings: crate::app::State<SettingsState>,
 ) -> Result<String, String> {
     help_ask_core(settings.inner(), question, context).await
 }
 
 /// Ask Gemini which candidate slide the vocalist is on right now.
-#[tauri::command]
 pub async fn gemini_pick_slide(
     transcript: String,
     candidates: Vec<GCandidate>,
-    settings: tauri::State<'_, SettingsState>,
+    settings: crate::app::State<SettingsState>,
 ) -> Result<GMatch, String> {
     pick_slide_core(settings.inner(), transcript, candidates).await
 }
 
 /// Validate the key + connectivity from the Settings page.
-#[tauri::command]
-pub async fn gemini_test(settings: tauri::State<'_, SettingsState>) -> Result<String, String> {
+pub async fn gemini_test(settings: crate::app::State<SettingsState>) -> Result<String, String> {
     test_core(settings.inner()).await
 }

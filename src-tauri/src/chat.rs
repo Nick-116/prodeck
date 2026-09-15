@@ -14,7 +14,7 @@ use serde_json::json;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
+use crate::app::AppHandle;
 
 const HISTORY_CAP: usize = 200;
 const MAX_FROM: usize = 32;
@@ -198,20 +198,18 @@ pub fn clear_confidence_core(app: &AppHandle) {
 
 // ---------------------------------------------------------------- commands
 
-#[tauri::command]
 pub fn chat_send(
     from: String,
     text: String,
     target: String,
     channel: String,
-    chat: tauri::State<'_, ChatState>,
+    chat: crate::app::State<ChatState>,
     app: AppHandle,
 ) -> Result<ChatMsg, String> {
     send_core(&app, chat.inner(), from, text, target, channel)
 }
 
-#[tauri::command]
-pub fn chat_history(chat: tauri::State<'_, ChatState>) -> Vec<ChatMsg> {
+pub fn chat_history(chat: crate::app::State<ChatState>) -> Vec<ChatMsg> {
     chat.history
         .lock()
         .unwrap_or_else(|p| p.into_inner())
@@ -220,7 +218,6 @@ pub fn chat_history(chat: tauri::State<'_, ChatState>) -> Vec<ChatMsg> {
         .collect()
 }
 
-#[tauri::command]
 pub fn chat_clear_confidence(app: AppHandle) {
     clear_confidence_core(&app);
 }

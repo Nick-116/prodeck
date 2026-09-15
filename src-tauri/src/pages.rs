@@ -19,7 +19,7 @@ use serde_json::json;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, Manager};
+use crate::app::AppHandle;
 
 use crate::identity::IdentityState;
 
@@ -180,7 +180,7 @@ fn should_rebuzz(elapsed_ms: u64, waiting: usize) -> bool {
 fn spawn_rebuzz(app: &AppHandle, pages: &PagesState, page_id: u64) {
     let app = app.clone();
     let pages = pages.clone();
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         let mut sent: u32 = 0;
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(rebuzz_delay_secs(sent))).await;
@@ -344,14 +344,13 @@ pub fn list_core(pages: &PagesState) -> Vec<Page> {
 
 // ---------------------------------------------------------------- commands
 
-#[tauri::command]
 pub fn page_send(
     from: String,
     body: String,
     recipients: Vec<String>,
     buzz: bool,
-    pages: tauri::State<'_, PagesState>,
-    identity: tauri::State<'_, IdentityState>,
+    pages: crate::app::State<PagesState>,
+    identity: crate::app::State<IdentityState>,
     app: AppHandle,
 ) -> Result<Page, String> {
     send_core(
@@ -365,21 +364,19 @@ pub fn page_send(
     )
 }
 
-#[tauri::command]
 pub fn page_ack(
     page_id: u64,
     session: String,
-    pages: tauri::State<'_, PagesState>,
-    identity: tauri::State<'_, IdentityState>,
+    pages: crate::app::State<PagesState>,
+    identity: crate::app::State<IdentityState>,
     app: AppHandle,
 ) -> Result<Receipt, String> {
     ack_core(&app, pages.inner(), identity.inner(), page_id, &session)
 }
 
-#[tauri::command]
 pub fn page_rebuzz(
     page_id: u64,
-    pages: tauri::State<'_, PagesState>,
+    pages: crate::app::State<PagesState>,
     app: AppHandle,
 ) -> Result<serde_json::Value, String> {
     // Shaped like the gateway's answer. The web path wrapped the count as
@@ -389,8 +386,7 @@ pub fn page_rebuzz(
     Ok(serde_json::json!({ "buzzed": n }))
 }
 
-#[tauri::command]
-pub fn page_list(pages: tauri::State<'_, PagesState>) -> Vec<Page> {
+pub fn page_list(pages: crate::app::State<PagesState>) -> Vec<Page> {
     list_core(pages.inner())
 }
 

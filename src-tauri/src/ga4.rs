@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager};
+use crate::app::AppHandle;
 
 const SCOPE: &str = "https://www.googleapis.com/auth/analytics.readonly";
 const POLL_SECS: u64 = 30;
@@ -270,13 +270,12 @@ pub fn snapshot(state: &Ga4State) -> Value {
     })
 }
 
-#[tauri::command]
-pub fn ga4_state(state: tauri::State<'_, Ga4State>) -> Value {
+pub fn ga4_state(state: crate::app::State<Ga4State>) -> Value {
     snapshot(state.inner())
 }
 
 pub fn spawn_ga4_poll(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(10)).await;
         loop {
             poll_once(&app).await;

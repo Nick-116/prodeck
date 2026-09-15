@@ -13,7 +13,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
+use crate::app::AppHandle;
 
 use crate::identity::IdentityState;
 
@@ -329,39 +329,45 @@ pub fn list(
 
 // ---------------------------------------------------------------- commands
 
-#[tauri::command]
 pub fn checkin_set(
     session: String,
     service_key: String,
-    state: tauri::State<'_, CheckinState>,
-    identity: tauri::State<'_, IdentityState>,
+    state: crate::app::State<CheckinState>,
+    identity: crate::app::State<IdentityState>,
     app: AppHandle,
 ) -> Result<u64, String> {
     check_in(&app, state.inner(), identity.inner(), &session, &service_key)
 }
 
-#[tauri::command]
 pub fn checkin_list(
     session: String,
-    state: tauri::State<'_, CheckinState>,
-    identity: tauri::State<'_, IdentityState>,
+    state: crate::app::State<CheckinState>,
+    identity: crate::app::State<IdentityState>,
     app: AppHandle,
 ) -> serde_json::Value {
     list(&app, state.inner(), identity.inner(), &session)
 }
 
-/// Booth desktop only — Settings shows the detected WAN address(es) so the
-/// wifi auto check-in is inspectable rather than magic.
-#[tauri::command]
+/// Settings shows the detected WAN address(es) so wifi auto check-in is inspectable.
 pub async fn checkin_wan_ip() -> Vec<String> {
     wan_ips().await
 }
 
-/// Booth desktop only — the UI reports the currently-selected service so
-/// arrivals land on the right sheet no matter what key a phone carries.
-#[tauri::command]
-pub fn checkin_set_service(service_key: String, state: tauri::State<'_, CheckinState>) {
+/// The UI reports the currently-selected service so arrivals land on the right sheet.
+pub fn checkin_set_service(service_key: String, state: crate::app::State<CheckinState>) {
     set_current_service(state.inner(), &service_key);
+}
+
+/// Dispatch-facing: return WAN IPs as a single joined string.
+pub async fn wan_ip_core() -> String {
+    wan_ips().await.join(", ")
+}
+
+/// Dispatch-facing: set the current service key and optionally emit an event.
+pub fn set_service_core(state: &CheckinState, key: &str, app: &AppHandle) -> Result<(), String> {
+    set_current_service(state, key);
+    app.emit("checkin:service-changed", serde_json::json!({ "key": key })).ok();
+    Ok(())
 }
 
 #[cfg(test)]

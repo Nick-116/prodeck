@@ -2,7 +2,7 @@ use crate::audio::AudioState;
 use crate::settings::SettingsState;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
+use crate::app::AppHandle;
 
 pub struct TranscriptionInner {
     pub running: AtomicBool,
@@ -25,8 +25,7 @@ pub struct TranscriptionConfig {
     pub whisper_model: Option<String>,
 }
 
-#[tauri::command]
-pub fn transcription_status(settings: tauri::State<'_, SettingsState>) -> TranscriptionConfig {
+pub fn status_core(settings: &SettingsState) -> TranscriptionConfig {
     let s = settings.lock().unwrap_or_else(|p| p.into_inner());
     let configured = s
         .whisper_bin
@@ -44,9 +43,16 @@ pub fn transcription_status(settings: tauri::State<'_, SettingsState>) -> Transc
     }
 }
 
+pub fn transcription_status(settings: crate::app::State<SettingsState>) -> TranscriptionConfig {
+    status_core(settings.inner())
+}
+
 /// Manually push a caption line (useful for testing the lower-third without a
 /// transcription engine installed).
-#[tauri::command]
+pub fn inject_caption_core(text: String, app: &AppHandle) {
+    emit_caption(app, &text);
+}
+
 pub fn inject_caption(text: String, app: AppHandle) {
     emit_caption(&app, &text);
 }
@@ -63,11 +69,28 @@ fn emit_caption(app: &AppHandle, text: &str) {
     .ok();
 }
 
-#[tauri::command]
+pub async fn start_core(
+    state: &TranscriptionState,
+    audio: &AudioState,
+    settings: &SettingsState,
+    app: AppHandle,
+) -> Result<(), String> {
+    start_transcription_inner(state.clone(), audio.clone(), settings, app)
+}
+
 pub fn start_transcription(
-    state: tauri::State<'_, TranscriptionState>,
-    audio: tauri::State<'_, AudioState>,
-    settings: tauri::State<'_, SettingsState>,
+    state: crate::app::State<TranscriptionState>,
+    audio: crate::app::State<AudioState>,
+    settings: crate::app::State<SettingsState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    start_transcription_inner(state.inner().clone(), audio.inner().clone(), settings.inner(), app)
+}
+
+fn start_transcription_inner(
+    state: TranscriptionState,
+    audio: AudioState,
+    settings: &SettingsState,
     app: AppHandle,
 ) -> Result<(), String> {
     let (bin, model) = {
@@ -86,16 +109,11 @@ pub fn start_transcription(
     state.running.store(true, Ordering::Release);
     app.emit("caption:status", "listening").ok();
 
-    let running = state.inner().clone();
-    let audio = audio.inner().clone();
+    let running = state.clone();
+    let audio = audio.clone();
     let app2 = app.clone();
 
-    // NOTE: this is a *synchronous* Tauri command, so it runs on the IPC thread
-    // with no Tokio runtime entered. `tokio::spawn` would panic ("must be called
-    // from the context of a Tokio runtime") and abort the whole app. Tauri's
-    // own spawner targets the managed runtime from any thread, and the future
-    // still runs on Tokio (so tokio::time / tokio::process inside it work).
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         // Length of each transcription window, in seconds.
         const WINDOW_SECS: u64 = 5;
         while running.running.load(Ordering::Acquire) {
@@ -151,8 +169,11 @@ pub fn start_transcription(
     Ok(())
 }
 
-#[tauri::command]
-pub fn stop_transcription(state: tauri::State<'_, TranscriptionState>, app: AppHandle) {
+pub fn stop_core(state: &TranscriptionState) {
+    state.running.store(false, Ordering::Release);
+}
+
+pub fn stop_transcription(state: crate::app::State<TranscriptionState>, app: AppHandle) {
     state.running.store(false, Ordering::Release);
     app.emit("caption:status", "stopped").ok();
 }

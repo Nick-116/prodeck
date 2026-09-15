@@ -1,0 +1,70 @@
+# ProDeck — booth hub as a Docker service.
+#
+# Quick start:
+#   docker compose up -d
+#
+# Open http://localhost:4000 in any browser (use your admin password from
+# Settings → Browser Access once the app starts).
+#
+# Ports: only 4000 is exposed by default. If you want a specific LAN IP,
+# set PRODECK_HOST in a .env file:
+#   PRODECK_HOST=192.168.1.50
+# Then uncomment the ports binding below and replace "127.0.0.1" with that IP.
+
+services:
+  prodeck:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: prodeck:latest
+    container_name: prodeck
+
+    restart: unless-stopped
+
+    # Expose the web gateway. Change the host binding to 0.0.0.0 to listen on
+    # all interfaces, or to a specific LAN IP (e.g. 192.168.1.50:4000:4000).
+    ports:
+      - "127.0.0.1:4000:4000"
+
+    # Persist settings, identity, check-in data, PCO cache, etc.
+    volumes:
+      - prodeck_data:/home/prodeck/.config/ProDeck
+
+    environment:
+      # Override the listening port (must also update ports: above).
+      # PRODECK_PORT: 4000
+
+      # Bootstrap admin password — used ONLY when no password has been saved in
+      # Settings yet. Set this to unlock the settings page on first startup;
+      # then set a real password in Settings → Browser Access and remove this.
+      # PRODECK_ADMIN_PASSWORD: changeme
+
+      # Optional: force a specific log level (error | warn | info | debug).
+      # RUST_LOG: info
+
+      # Optional: NDI SDK path if you use Stage Feed tiles.
+      # PRODECK_NDI_LIB: /usr/local/lib/libndi.so
+
+    # ProDeck needs to reach the LAN (ProPresenter, Avantis, OBS). Use host
+    # networking if you want mDNS/Bonjour discovery to work transparently; for
+    # container-isolated installs, bridge mode (the default) is fine and ProPr-
+    # esenter can be reached by its IP address or hostname.
+    # network_mode: host  # uncomment for mDNS discovery
+
+    # Audio: pass the ALSA sound card into the container for overflow audio
+    # metering and the MP3 listen stream. Comment out if not needed.
+    # devices:
+    #   - /dev/snd:/dev/snd
+    # group_add:
+    #   - audio
+
+    # Resource limits for headless server use.
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 512M
+
+volumes:
+  prodeck_data:
+    driver: local

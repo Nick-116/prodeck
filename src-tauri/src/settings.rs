@@ -1,3 +1,4 @@
+use crate::app::{AppHandle, State};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -349,7 +350,6 @@ fn dashboards_path() -> PathBuf {
 
 /// Dashboards are stored as opaque JSON so the widget/layout schema can live
 /// entirely in the frontend and evolve without touching Rust.
-#[tauri::command]
 pub fn load_dashboards() -> Result<serde_json::Value, String> {
     // Strict: a corrupt file must not be indistinguishable from "no file yet".
     // Flattening both to Null meant the frontend seeded factory defaults and
@@ -357,7 +357,6 @@ pub fn load_dashboards() -> Result<serde_json::Value, String> {
     read_json_strict(&dashboards_path(), "dashboards.json")
 }
 
-#[tauri::command]
 pub fn save_dashboards(data: serde_json::Value) -> Result<(), String> {
     let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
     write_json_atomic_backed_up(dashboards_path(), json)
@@ -369,7 +368,6 @@ fn pco_data_path() -> PathBuf {
 
 /// Planning Center local state (selected plan + mic assignments), kept as
 /// opaque JSON owned by the frontend.
-#[tauri::command]
 pub fn load_pco_data() -> Result<serde_json::Value, String> {
     // Strict: a corrupt file must not be indistinguishable from "no file yet".
     // Flattening both to Null meant the frontend seeded factory defaults and
@@ -377,7 +375,6 @@ pub fn load_pco_data() -> Result<serde_json::Value, String> {
     read_json_strict(&pco_data_path(), "pco.json")
 }
 
-#[tauri::command]
 pub fn save_pco_data(data: serde_json::Value) -> Result<(), String> {
     let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
     write_json_atomic_backed_up(pco_data_path(), json)
@@ -388,7 +385,6 @@ fn checklists_path() -> PathBuf {
 }
 
 /// App-wide checklists (with due dates), owned by the frontend as opaque JSON.
-#[tauri::command]
 pub fn load_checklists() -> Result<serde_json::Value, String> {
     // Strict: a corrupt file must not be indistinguishable from "no file yet".
     // Flattening both to Null meant the frontend seeded factory defaults and
@@ -396,13 +392,11 @@ pub fn load_checklists() -> Result<serde_json::Value, String> {
     read_json_strict(&checklists_path(), "checklists.json")
 }
 
-#[tauri::command]
-pub fn save_checklists(data: serde_json::Value, app: tauri::AppHandle) -> Result<(), String> {
+pub fn save_checklists(data: serde_json::Value, app: AppHandle) -> Result<(), String> {
     let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
     write_json_atomic_backed_up(checklists_path(), json)?;
     // Tell the phones. Only the phone->booth direction announced itself, so a
     // volunteer's list stayed stale until they reloaded the app.
-    use tauri::Emitter;
     app.emit("checklist:changed", serde_json::json!({})).ok();
     Ok(())
 }
@@ -414,7 +408,6 @@ fn routing_path() -> PathBuf {
 /// System signal-routing map (chains of hops with troubleshooting steps),
 /// owned by the frontend as opaque JSON. Read by every web tier so volunteer
 /// phones/laptops can see the chain; writes stay booth-only like the rest.
-#[tauri::command]
 pub fn load_routing() -> Result<serde_json::Value, String> {
     // Strict: a corrupt file must not be indistinguishable from "no file yet".
     // Flattening both to Null meant the frontend seeded factory defaults and
@@ -422,7 +415,6 @@ pub fn load_routing() -> Result<serde_json::Value, String> {
     read_json_strict(&routing_path(), "routing.json")
 }
 
-#[tauri::command]
 pub fn save_routing(data: serde_json::Value) -> Result<(), String> {
     let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
     write_json_atomic_backed_up(routing_path(), json)
@@ -439,7 +431,6 @@ fn tracking_path() -> PathBuf {
 /// returns Err so the caller can refuse to persist over it. Returning null for
 /// a corrupt file is what silently destroyed history: the store started empty
 /// and the next 4-second autosave wrote that emptiness back over the real file.
-#[tauri::command]
 pub fn load_tracking() -> Result<serde_json::Value, String> {
     read_json_strict(&tracking_path(), "tracking.json")
 }
@@ -504,7 +495,6 @@ fn read_json_strict(path: &PathBuf, name: &str) -> Result<serde_json::Value, Str
     }
 }
 
-#[tauri::command]
 pub fn save_tracking(data: serde_json::Value) -> Result<(), String> {
     let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
     write_json_atomic_backed_up(tracking_path(), json)
@@ -517,12 +507,10 @@ fn schedules_path() -> PathBuf {
 /// Scheduled alerts (fire a page at a clock time or T-minus the service).
 /// Opaque JSON: the schema lives in the frontend, which is also what evaluates
 /// the schedule — it's the half that knows the Planning Center service times.
-#[tauri::command]
 pub fn load_schedules() -> Result<serde_json::Value, String> {
     read_json_strict(&schedules_path(), "schedules.json")
 }
 
-#[tauri::command]
 pub fn save_schedules(data: serde_json::Value) -> Result<(), String> {
     let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
     write_json_atomic_backed_up(schedules_path(), json)
@@ -535,12 +523,10 @@ fn reports_path() -> PathBuf {
 /// Saved service reports — append-only snapshots, deliberately kept in their
 /// own file so nothing in the live tracking flow (Reset, a bucket switch, a
 /// corrupt tracking.json) can take them with it.
-#[tauri::command]
 pub fn load_reports() -> Result<serde_json::Value, String> {
     read_json_strict(&reports_path(), "reports.json")
 }
 
-#[tauri::command]
 pub fn save_reports(data: serde_json::Value) -> Result<(), String> {
     let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
     write_json_atomic_backed_up(reports_path(), json)
@@ -654,15 +640,13 @@ pub fn save(settings: &Settings) -> Result<(), String> {
     write_json_atomic_backed_up(config_path(), json)
 }
 
-#[tauri::command]
-pub fn get_settings(state: tauri::State<'_, SettingsState>) -> Settings {
+pub fn get_settings(state: State<SettingsState>) -> Settings {
     state.lock().unwrap_or_else(|p| p.into_inner()).clone()
 }
 
-#[tauri::command]
 pub fn update_settings(
     settings: Settings,
-    state: tauri::State<'_, SettingsState>,
+    state: State<SettingsState>,
 ) -> Result<(), String> {
     let to_save = {
         let mut s = state.lock().unwrap_or_else(|p| p.into_inner());
@@ -762,7 +746,6 @@ mod tests {
 /// last-writer-wins clobbering). But a volunteer ticking their own list is a
 /// legitimate, tiny mutation, so it gets a targeted command: the booth reads,
 /// flips exactly one item, and writes. Returns the new state of that item.
-#[tauri::command]
 pub fn checklist_toggle(list_id: String, item_id: String) -> Result<bool, String> {
     let mut data = read_json_strict(&checklists_path(), "checklists.json")?;
     let lists = data

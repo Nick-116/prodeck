@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
+use crate::app::AppHandle;
 
 /// Per-file cap. Big enough for a scanned PDF, small enough that a volunteer on
 /// cellular in the car park isn't waiting on a 60MB download.
@@ -181,27 +181,24 @@ pub fn read_blob(state: &PosFilesState, id: &str) -> Option<(String, String, Vec
 
 // ---------------------------------------------------------------- commands
 
-#[tauri::command]
-pub fn posfile_list(state: tauri::State<'_, PosFilesState>) -> Vec<PosFile> {
+pub fn posfile_list(state: crate::app::State<PosFilesState>) -> Vec<PosFile> {
     list_core(state.inner())
 }
 
-#[tauri::command]
 pub fn posfile_add(
     position: String,
     name: String,
     mime: String,
     data: String,
-    state: tauri::State<'_, PosFilesState>,
+    state: crate::app::State<PosFilesState>,
     app: AppHandle,
 ) -> Result<PosFile, String> {
     add_core(&app, state.inner(), position, name, mime, data)
 }
 
-#[tauri::command]
 pub fn posfile_remove(
     id: String,
-    state: tauri::State<'_, PosFilesState>,
+    state: crate::app::State<PosFilesState>,
     app: AppHandle,
 ) -> Result<(), String> {
     remove_core(&app, state.inner(), id)

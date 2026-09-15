@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager};
+use crate::app::AppHandle;
 
 const B64: base64::engine::general_purpose::GeneralPurpose = base64::engine::general_purpose::STANDARD;
 
@@ -82,8 +82,7 @@ pub fn dropped_pct(skipped: u64, total: u64) -> f64 {
     (skipped as f64 / total as f64) * 100.0
 }
 
-#[tauri::command]
-pub fn obs_state(state: tauri::State<'_, ObsState>) -> Value {
+pub fn obs_state(state: crate::app::State<ObsState>) -> Value {
     snapshot(state.inner())
 }
 
@@ -184,7 +183,7 @@ fn friendly(e: &str) -> String {
 }
 
 pub fn spawn_client(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         let state: ObsState = app.state::<ObsState>().inner().clone();
         loop {
             let (enabled, host, port, password) = settings(&app);
@@ -404,7 +403,6 @@ async fn next_json(ws: &mut Ws) -> Result<Value, String> {
 
 /// Switch scenes. Admin-tier only (enforced in web.rs) — this changes what the
 /// world sees.
-#[tauri::command]
 pub async fn obs_set_scene(scene: String, app: AppHandle) -> Result<(), String> {
     let (enabled, host, port, password) = settings(&app);
     if !enabled || host.trim().is_empty() {
