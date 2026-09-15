@@ -2637,7 +2637,7 @@ function HelpLink({ section }: { section: string }) {
 }
 
 /**
- * Reliability: the two things a booth Mac must do unattended — relaunch after
+ * Reliability: the two things a booth computer must do unattended — relaunch after
  * a crash / start at login, and never fall asleep. The DMG install used to get
  * neither; both are now switches here.
  */
@@ -2715,7 +2715,7 @@ function ReliabilityCard() {
         </div>
         <div className="rel-row">
           <div>
-            <strong>Keep this Mac awake while ProDeck is open</strong>
+            <strong>Keep this computer awake while ProDeck is open</strong>
             <span className="muted small">Prevents idle and system sleep for as long as ProDeck runs (the display may still dim). Nothing is left behind when ProDeck quits.</span>
           </div>
           <div className="rel-actions">
@@ -2907,10 +2907,10 @@ function HelpCard() {
     if (!b) return;
     try {
       const j = JSON.parse(b);
-      const sys = `ProDeck ${j?.prodeck?.version ?? "?"} · macOS ${j?.system?.macos ?? "?"} (${j?.system?.arch ?? "?"})`;
+      const sys = `ProDeck ${j?.prodeck?.version ?? "?"} · ${j?.system?.os ?? "Unknown OS"} ${j?.system?.version ?? "?"} (${j?.system?.arch ?? "?"})`;
       const title = summary.trim().split("\n")[0].slice(0, 80) || "Problem report";
       await diagOpenIssue(REPORT_REPO, title, summary.trim() || "(describe what happened)", sys);
-      setMsg("A GitHub page opened with your report started. Paste the diagnostics (already on your clipboard) into the Diagnostics box with Cmd-V, then Submit.");
+      setMsg("A GitHub page opened with your report started. Paste the diagnostics (already on your clipboard) into the Diagnostics box, then Submit.");
     } catch (e) { setMsg(String(e)); }
   };
   return (

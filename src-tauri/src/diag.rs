@@ -173,7 +173,7 @@ pub fn diag_bundle(client: Value, app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub fn diag_open_issue(repo: String, title: String, summary: String, system_line: String, app: AppHandle) -> Result<(), String> {
     let body = format!(
-        "**What happened**\n{summary}\n\n**System**\n{system_line}\n\n**Diagnostics**\n<details><summary>Paste the bundle here (it is on your clipboard — Cmd-V below; secrets are already redacted)</summary>\n\n```json\n\n```\n</details>\n"
+        "**What happened**\n{summary}\n\n**System**\n{system_line}\n\n**Diagnostics**\n<details><summary>Paste the bundle here (it is on your clipboard; secrets are already redacted)</summary>\n\n```json\n\n```\n</details>\n"
     );
     let url = format!(
         "https://github.com/{}/issues/new?title={}&body={}",

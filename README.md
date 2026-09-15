@@ -115,6 +115,12 @@ evaluate-then-adopt handbook: every feature with its requirements, what's
 site-specific, realistic effort estimates, and the phased path from a spare-Mac
 trial to tap discs, kiosks, and a booth-off-resilient domain.
 
+## Windows preview
+
+The current source contains an unvalidated Windows port. Work to compile and
+test it is tracked in [WINDOWS.md](WINDOWS.md). Until the Windows checklist has
+been completed on real booth hardware, the supported release remains macOS.
+
 ## Requirements
 
 - A Mac for the booth app — Intel or Apple Silicon, macOS 10.15+ (clients can be anything with a browser)

@@ -567,7 +567,7 @@ export function FirstRunSetup({ onNavigate }: { onNavigate?: (p: string) => void
             <span className="ob-eyebrow">Welcome</span>
             <h1>Your production booth, in one app.</h1>
             <p className="ob-lead">
-              ProDeck runs on a Mac in your booth and ties the room together —
+              ProDeck runs on a computer in your booth and ties the room together —
               ProPresenter, Planning Center, your sound console, crew phones, and
               the livestream — then shows it all as live dashboards anyone on your
               team can open. Free, open source, no account.
@@ -576,7 +576,7 @@ export function FirstRunSetup({ onNavigate }: { onNavigate?: (p: string) => void
               <div className="ob-how-item">
                 <Icon name="dashboard" size={20} />
                 <strong>One hub</strong>
-                <span>This Mac connects to your tools and reads their live state.</span>
+                <span>This computer connects to your tools and reads their live state.</span>
               </div>
               <div className="ob-how-item">
                 <Icon name="grid" size={20} />
@@ -977,7 +977,7 @@ export function FirstRunSetup({ onNavigate }: { onNavigate?: (p: string) => void
               </div>
             )}
             {keep && keep.installed && keep.matchesCurrent && (
-              <p className="ob-ok"><span className="ob-check">✓</span> Keep ProDeck running is on — it starts at login and relaunches after a crash.</p>
+              <p className="ob-ok"><span className="ob-check">✓</span> {keep.supervises === false ? "Start at login is on." : "Keep ProDeck running is on — it starts at login and relaunches after a crash."}</p>
             )}
             <ul className="ob-summary">
               <SummaryRow ok={state.pro} label="ProPresenter" okText="connected" offText="not connected — ProPresenter page" />

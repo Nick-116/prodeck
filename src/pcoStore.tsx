@@ -806,16 +806,34 @@ export function PcoProvider({ children }: { children: ReactNode }) {
   async function loadPlans(stId: string) {
     setStatus("Loading plans…");
     try {
-      const j = await pcoGet(
+      // `filter=future` drops today's plan as soon as Planning Center decides
+      // its service time has passed. The auto-target effect then cannot find
+      // the manually selected plan in `plans` and replaces it with next week.
+      // Keep the future query for the useful chronological list, but merge in
+      // recent plans so the current weekend remains selectable all day.
+      const futureJson = await pcoGet(
         `services/v2/service_types/${stId}/plans?filter=future&order=sort_date&per_page=25`,
       );
-      let parsed = parsePlans(j);
+      const recentJson = await pcoGet(
+        `services/v2/service_types/${stId}/plans?order=-sort_date&per_page=25`,
+      ).catch(() => null);
+      const future = parsePlans(futureJson);
+      const recent = parsePlans(recentJson);
+      const byId = new Map<string, Plan>();
+      for (const plan of [...recent, ...future]) byId.set(plan.id, plan);
+      let parsed = [...byId.values()].sort((a, b) => {
+        const at = Date.parse(a.date);
+        const bt = Date.parse(b.date);
+        if (Number.isFinite(at) && Number.isFinite(bt)) return at - bt;
+        return a.date.localeCompare(b.date);
+      });
       if (parsed.length === 0) {
-        // Fall back to most recent plans if none are upcoming.
-        const j2 = await pcoGet(
+        // Defensive fallback for organizations whose API does not support the
+        // future filter in the usual way.
+        const fallback = await pcoGet(
           `services/v2/service_types/${stId}/plans?order=-sort_date&per_page=25`,
         );
-        parsed = parsePlans(j2);
+        parsed = parsePlans(fallback).reverse();
       }
       setPlans(parsed);
       setStatus("");
