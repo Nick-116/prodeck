@@ -47,7 +47,13 @@ COPY src-tauri ./src-tauri
 ENV OPENSSL_STATIC=1 OPENSSL_VENDOR=1
 
 # Build in release mode.
-RUN cd src-tauri && cargo build --release
+# The two cache mounts survive across `docker compose build` calls:
+#   registry — downloaded crate sources (~hundreds of MB, rarely changes)
+#   target   — compiled artifacts (only changed crates recompile)
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/src-tauri/target \
+    cd src-tauri && cargo build --release && \
+    cp target/release/prodeck /prodeck-bin
 
 # ── Stage 3: runtime ─────────────────────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
@@ -62,7 +68,7 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
 RUN useradd -m -u 1001 prodeck
 
 # Copy the compiled binary.
-COPY --from=backend /app/src-tauri/target/release/prodeck /usr/local/bin/prodeck
+COPY --from=backend /prodeck-bin /usr/local/bin/prodeck
 
 # Data directory — settings, PCO data, identity, etc. Mount a volume here.
 RUN mkdir -p /home/prodeck/.config/ProDeck && chown -R prodeck:prodeck /home/prodeck
