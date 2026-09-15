@@ -487,7 +487,8 @@ pub fn status_value(app: &AppHandle) -> Value {
     let installed = platform::installed_program();
     let awake = {
         let k = app.state::<KeepAwake>();
-        k.inner().0.lock().unwrap_or_else(|p| p.into_inner()).is_some()
+        let is_awake = k.inner().0.lock().unwrap_or_else(|p| p.into_inner()).is_some();
+        is_awake
     };
     json!({
         "installed": installed.is_some(),
