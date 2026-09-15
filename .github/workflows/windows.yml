@@ -5,6 +5,12 @@ on:
   pull_request:
   push:
     branches:
+      # master too, not just the Windows track. The release script builds the
+      # installer as a step of publishing, so a Windows break that nobody knew
+      # about used to surface for the first time mid-release — after the
+      # ten-minute universal Mac build — and abort it. Catch it on the commit
+      # that caused it instead.
+      - master
       - windows-harbor
 
 jobs:
