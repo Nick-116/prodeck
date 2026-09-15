@@ -2,15 +2,17 @@
 //! let the machine fall asleep mid-service. A booth computer has to survive
 //! unattended; the DMG install used to get none of this.
 //!
-//! Two platform implementations behind one API:
+//! Three platform implementations behind one API:
 //!   * macOS — a per-user LaunchAgent plus `caffeinate` bound to our own pid.
+//!   * Linux — a systemd user service (start-at-login + crash-relaunch) plus
+//!             `systemd-inhibit` bound to our own lifetime for sleep prevention.
 //!   * Windows — an HKCU Run entry plus SetThreadExecutionState.
 //!
 //! ⚠️ The Windows path has never been compiled or run. Cross-compiling from
 //! macOS stops at a C dependency that needs the MSVC toolchain, so it cannot
 //! even be type-checked here. Treat it as a starting point that needs a
-//! Windows machine, not as working code. macOS is unaffected either way: every
-//! platform call is behind #[cfg].
+//! Windows machine, not as working code. macOS and Linux are unaffected either
+//! way: every platform call is behind #[cfg].
 
 use serde_json::{json, Value};
 use std::sync::Mutex;
@@ -18,8 +20,8 @@ use tauri::{AppHandle, Manager};
 
 pub const LABEL: &str = "com.prodeck.watchdog";
 
-/// What the sleep guard holds onto. macOS keeps the `caffeinate` child so it
-/// dies with us; Windows just flips a thread flag, so there is nothing to hold.
+/// What the sleep guard holds onto. macOS and Linux keep the inhibitor child so
+/// it dies with us; Windows just flips a thread flag, so there is nothing to hold.
 #[cfg(target_os = "macos")]
 pub type AwakeGuard = std::process::Child;
 /// Windows keeps the sender for the thread that holds the execution-state flag:
@@ -28,8 +30,10 @@ pub type AwakeGuard = std::process::Child;
 /// sender is what tells that thread to release it and exit.
 #[cfg(windows)]
 pub type AwakeGuard = std::sync::mpsc::Sender<()>;
+/// Linux: holds the `systemd-inhibit … sleep infinity` child — same
+/// "nothing left behind" property as caffeinate: it dies when we do.
 #[cfg(not(any(target_os = "macos", windows)))]
-pub type AwakeGuard = ();
+pub type AwakeGuard = std::process::Child;
 
 pub struct KeepAwake(pub Mutex<Option<AwakeGuard>>);
 
@@ -321,32 +325,157 @@ mod platform {
 }
 
 // ===========================================================================
-// Anything else (Linux, etc.): compile, and say honestly that it does nothing.
+// Linux — systemd user service (watchdog + start-at-login) + systemd-inhibit
+// (sleep guard).
 // ===========================================================================
 #[cfg(not(any(target_os = "macos", windows)))]
 mod platform {
     use super::*;
-    pub const INSTALL_HINT: &str = "Keeping ProDeck running isn't supported on this platform yet.";
-    pub fn in_install_dir(_exe: &str) -> bool {
-        false
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    pub const INSTALL_HINT: &str =
+        "Move ProDeck to /usr/local/bin or another permanent directory first — the watchdog needs a stable path to relaunch.";
+
+    pub fn in_install_dir(exe: &str) -> bool {
+        !(exe.contains("/target/debug/")
+            || exe.contains("/target/release/")
+            || exe.starts_with("/tmp/")
+            || exe.starts_with("/var/tmp/"))
     }
+
+    /// systemd sets INVOCATION_ID on every service it manages — it is the
+    /// canonical way to detect "running under systemd" from inside a process.
     pub fn under_supervisor() -> bool {
-        false
+        std::env::var("INVOCATION_ID").is_ok()
     }
+
+    fn autostart_path() -> Option<PathBuf> {
+        dirs::config_dir().map(|c| c.join("autostart/prodeck.desktop"))
+    }
+
+    fn service_path() -> Option<PathBuf> {
+        dirs::config_dir().map(|c| c.join("systemd/user/prodeck.service"))
+    }
+
+    fn systemctl(args: &[&str]) -> Result<(), String> {
+        let out = Command::new("systemctl")
+            .args(args)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        }
+    }
+
+    /// The exe path from the installed unit file, if any.
     pub fn installed_program() -> Option<String> {
-        None
+        let txt = std::fs::read_to_string(service_path()?).ok()?;
+        txt.lines()
+            .find(|l| l.starts_with("ExecStart="))?
+            .strip_prefix("ExecStart=")
+            .map(|s| s.trim().to_string())
     }
-    pub fn install(_exe: &str) -> Result<(), String> {
-        Err(INSTALL_HINT.into())
-    }
-    pub fn uninstall() -> Result<(), String> {
+
+    pub fn install(exe: &str) -> Result<(), String> {
+        // XDG autostart entry — for desktop environments that respect it.
+        if let Some(path) = autostart_path() {
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            }
+            let desktop = format!(
+                "[Desktop Entry]\nType=Application\nName=ProDeck\nExec={exe}\nHidden=false\nNoDisplay=false\nX-GNOME-Autostart-enabled=true\n"
+            );
+            std::fs::write(&path, desktop).map_err(|e| e.to_string())?;
+        }
+
+        // systemd user service — gives crash-relaunch on top of start-at-login.
+        if let Some(path) = service_path() {
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            }
+            let unit = format!(
+                "[Unit]\nDescription=ProDeck booth hub\nAfter=network.target\n\n[Service]\nExecStart={exe}\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
+            );
+            std::fs::write(&path, unit).map_err(|e| e.to_string())?;
+            let _ = systemctl(&["--user", "daemon-reload"]);
+            systemctl(&["--user", "enable", "prodeck"])
+                .or_else(|e| if e.contains("already") { Ok(()) } else { Err(e) })?;
+            kill_other_instances();
+        }
+
         Ok(())
     }
-    pub fn relaunch() -> Result<(), String> {
-        Err(INSTALL_HINT.into())
+
+    fn kill_other_instances() {
+        let me = std::process::id().to_string();
+        if let Ok(out) = Command::new("pgrep").args(["-x", "prodeck"]).output() {
+            for pid in String::from_utf8_lossy(&out.stdout).split_whitespace() {
+                if pid != me {
+                    let _ = Command::new("kill").args(["-TERM", pid]).output();
+                }
+            }
+        }
     }
-    pub fn wake_on(_slot: &mut Option<AwakeGuard>) {}
-    pub fn wake_off(_slot: &mut Option<AwakeGuard>) {}
+
+    pub fn uninstall() -> Result<(), String> {
+        let _ = systemctl(&["--user", "disable", "prodeck"]);
+        if let Some(path) = service_path() {
+            if path.exists() {
+                std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+            }
+        }
+        let _ = systemctl(&["--user", "daemon-reload"]);
+        if let Some(path) = autostart_path() {
+            if path.exists() {
+                std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn relaunch() -> Result<(), String> {
+        if service_path().filter(|p| p.exists()).is_none() {
+            return Err("Turn on Keep ProDeck running first.".into());
+        }
+        systemctl(&["--user", "restart", "prodeck"])
+    }
+
+    /// `systemd-inhibit --what=sleep:idle --mode=block sleep infinity` blocks
+    /// idle and system sleep for exactly as long as the child lives — nothing
+    /// left behind, identical "dies with us" property to caffeinate on macOS.
+    pub fn wake_on(slot: &mut Option<AwakeGuard>) {
+        if slot.is_some() {
+            return;
+        }
+        match Command::new("systemd-inhibit")
+            .args([
+                "--what=sleep:idle",
+                "--who=ProDeck",
+                "--why=Booth computer",
+                "--mode=block",
+                "sleep",
+                "infinity",
+            ])
+            .spawn()
+        {
+            Ok(child) => {
+                *slot = Some(child);
+                crate::diag::log("[keepalive] sleep guard on");
+            }
+            Err(e) => crate::diag::log(format!("[keepalive] systemd-inhibit failed: {e}")),
+        }
+    }
+
+    pub fn wake_off(slot: &mut Option<AwakeGuard>) {
+        if let Some(mut child) = slot.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+            crate::diag::log("[keepalive] sleep guard off");
+        }
+    }
 }
 
 // ===========================================================================
@@ -369,9 +498,9 @@ pub fn status_value(app: &AppHandle) -> Value {
         "exe": exe,
         "keepAwake": awake,
         // Whether this platform can relaunch after a CRASH, or only start at
-        // login. macOS can; a Windows Run key cannot, and the UI must not
-        // claim otherwise.
-        "supervises": cfg!(target_os = "macos"),
+        // login. macOS (launchd) and Linux (systemd) can; a Windows Run key
+        // cannot, and the UI must not claim otherwise.
+        "supervises": cfg!(not(windows)),
         "installHint": platform::INSTALL_HINT,
     })
 }

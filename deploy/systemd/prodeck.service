@@ -1,0 +1,24 @@
+# ProDeck systemd user service.
+# Written by scripts/install-linux.sh (Settings → Reliability also manages this).
+# Starts ProDeck at login and relaunches it within ~5s of any crash.
+# A deliberate Quit stays quit (Restart=on-failure: exit code 0 is not restarted).
+#
+# Install: scripts/install-linux.sh
+# Status:  systemctl --user status prodeck
+# Logs:    journalctl --user -u prodeck -f
+
+[Unit]
+Description=ProDeck booth hub
+After=network.target graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+# ExecStart is replaced with the real binary path by install-linux.sh.
+ExecStart=/usr/local/bin/prodeck
+Restart=on-failure
+RestartSec=5
+# Give the GUI time to start (Wayland/X11 compositor).
+ExecStartPre=/bin/sleep 3
+
+[Install]
+WantedBy=default.target

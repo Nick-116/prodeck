@@ -122,12 +122,19 @@ unsafe fn load_ndi() -> Option<NdiLib> {
         own.as_str(),
         NDI_LIB,
     ];
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     let candidates = [
         "/Library/NDI SDK for Apple/lib/macOS/libndi.dylib",
         own.as_str(),
         "/usr/local/lib/libndi.dylib",
         "libndi.dylib",
+    ];
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let candidates = [
+        own.as_str(),
+        "/usr/lib/libndi.so",
+        "/usr/local/lib/libndi.so",
+        "libndi.so",
     ];
     for path in candidates {
         if path.is_empty() {

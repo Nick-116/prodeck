@@ -4,10 +4,14 @@
 # files, so your fork never has to carry your church's values in code.
 #
 #   bash scripts/setup.sh            # check prereqs, configure, run in dev mode
-#   bash scripts/setup.sh --install  # …then build signed + install permanently
+#   bash scripts/setup.sh --install  # …then build and install permanently
 #
-# Just want a double-click installer? scripts/build-dmg.sh makes a
-# drag-to-Applications ProDeck.dmg.
+# macOS: produces a signed .app and installs it under a LaunchAgent watchdog.
+# Linux: produces an AppImage + DEB and installs under a systemd user service.
+#
+# Just want an installer package?
+#   macOS: scripts/build-dmg.sh
+#   Linux: scripts/build-linux.sh
 #
 # Safe to re-run: every step detects what already exists and skips it.
 set -euo pipefail
@@ -15,21 +19,41 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 LOCAL_CONF="$REPO_DIR/src-tauri/tauri.local.conf.json"
 MODE="${1:-dev}"
+OS="$(uname -s)"
 
 say()  { printf "\n\033[1m%s\033[0m\n" "$*"; }
 note() { printf "  %s\n" "$*"; }
 die()  { printf "\n\033[31m%s\033[0m\n" "$*"; exit 1; }
 
-[ "$(uname -s)" = "Darwin" ] || die "ProDeck's booth app is macOS-only (the phones/kiosks that connect to it can be anything)."
+[ "$OS" = "Darwin" ] || [ "$OS" = "Linux" ] || die "Unsupported platform: $OS. ProDeck supports macOS and Linux."
 
 # ---------------------------------------------------------------- prereqs
 say "1/5 · Prerequisites"
-if ! xcode-select -p >/dev/null 2>&1; then
-  note "Xcode command-line tools missing — launching the installer (rerun this script after it finishes)."
-  xcode-select --install || true
-  exit 1
+
+if [ "$OS" = "Darwin" ]; then
+  if ! xcode-select -p >/dev/null 2>&1; then
+    note "Xcode command-line tools missing — launching the installer (rerun this script after it finishes)."
+    xcode-select --install || true
+    exit 1
+  fi
+  note "✓ Xcode command-line tools"
 fi
-note "✓ Xcode command-line tools"
+
+if [ "$OS" = "Linux" ]; then
+  MISSING_PKGS=()
+  for pkg in build-essential pkg-config libwebkit2gtk-4.1-dev libssl-dev libasound2-dev libgtk-3-dev curl; do
+    if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+      MISSING_PKGS+=("$pkg")
+    fi
+  done
+  if [ ${#MISSING_PKGS[@]} -gt 0 ]; then
+    note "Missing system packages: ${MISSING_PKGS[*]}"
+    note "Installing them now (requires sudo)…"
+    sudo apt-get update -qq
+    sudo apt-get install -y "${MISSING_PKGS[@]}"
+  fi
+  note "✓ system dependencies"
+fi
 
 if ! command -v cargo >/dev/null 2>&1; then
   note "Rust missing — installing via rustup (official installer)…"
@@ -39,13 +63,12 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 note "✓ Rust $(rustc --version 2>/dev/null | awk '{print $2}')"
 
-# OpenSSL is compiled INTO the app (vendored) — no Homebrew library needed at
-# build or run time. Building it from source only needs perl, which ships
-# with macOS.
-command -v perl >/dev/null 2>&1 || die "perl is required to build the bundled OpenSSL (it ships with macOS — check your PATH)."
+# OpenSSL is compiled INTO the app (vendored). Building it from source only
+# needs perl, which ships with both macOS and all major Linux distros.
+command -v perl >/dev/null 2>&1 || die "perl is required to build the bundled OpenSSL — install it and rerun."
 note "✓ perl (for the bundled OpenSSL build)"
 
-command -v node >/dev/null 2>&1 || die "Node.js 20+ is required — install from nodejs.org or 'brew install node', then rerun."
+command -v node >/dev/null 2>&1 || die "Node.js 20+ is required — install from nodejs.org or your package manager, then rerun."
 NODE_MAJOR="$(node -v | sed 's/^v//' | cut -d. -f1)"
 [ "$NODE_MAJOR" -ge 18 ] || die "Node $(node -v) is too old — 20+ recommended."
 note "✓ Node $(node -v)"
@@ -59,7 +82,9 @@ say "3/5 · Your environment (written to gitignored local files)"
 if [ -f "$LOCAL_CONF" ]; then
   note "✓ src-tauri/tauri.local.conf.json already exists — keeping it."
 else
-  note "macOS ties microphone/screen permissions to the bundle identifier — pick once, keep forever."
+  if [ "$OS" = "Darwin" ]; then
+    note "macOS ties microphone/screen permissions to the bundle identifier — pick once, keep forever."
+  fi
   printf "  App bundle identifier [com.prodeck.app]: "
   read -r IDENT; IDENT="${IDENT:-com.prodeck.app}"
   cat > "$LOCAL_CONF" <<EOF
@@ -85,10 +110,11 @@ if [ "$MODE" != "--install" ]; then
 fi
 
 # ------------------------------------------------------------- install mode
-say "4/5 · Signed build"
-IDENTITY="${SIGN_IDENTITY:-ProDeck Self Sign}"
-if ! security find-identity -p codesigning -v 2>/dev/null | grep -q "$IDENTITY"; then
-  cat <<EOM
+if [ "$OS" = "Darwin" ]; then
+  say "4/5 · Signed build (macOS)"
+  IDENTITY="${SIGN_IDENTITY:-ProDeck Self Sign}"
+  if ! security find-identity -p codesigning -v 2>/dev/null | grep -q "$IDENTITY"; then
+    cat <<EOM
 
   No codesigning identity named "$IDENTITY".
   Create one (once): Keychain Access → Certificate Assistant → Create a
@@ -96,35 +122,49 @@ if ! security find-identity -p codesigning -v 2>/dev/null | grep -q "$IDENTITY";
   Certificate Type "Code Signing". Then rerun with --install.
   (Or set SIGN_IDENTITY=YourName to use an identity you already have.)
 EOM
-  exit 1
-fi
-note "✓ signing identity: $IDENTITY"
+    exit 1
+  fi
+  note "✓ signing identity: $IDENTITY"
 
-cd "$REPO_DIR"
-APP="$REPO_DIR/src-tauri/target/release/bundle/macos/ProDeck.app"
-# Remove any previous bundle first: a failed build must not leave a stale app
-# in place for the sign+install steps below to pick up.
-rm -rf "$APP"
-# --bundles app: the DMG bundler drives Finder via AppleScript and fails
-# headless; the DMG is scripts/build-dmg.sh's job.
-BUILD_ARGS=(build --bundles app)
-[ -f "$LOCAL_CONF" ] && BUILD_ARGS+=(--config "$LOCAL_CONF")
-if [ -f "$HOME/.prodeck/updater.key" ]; then
-  TAURI_SIGNING_PRIVATE_KEY="$(cat "$HOME/.prodeck/updater.key")" npm run tauri -- "${BUILD_ARGS[@]}" || true
-else
-  npm run tauri -- "${BUILD_ARGS[@]}" || true
-fi
-[ -d "$APP" ] || die "Build did not produce $APP — scroll up for the real error."
-codesign --force --deep --sign "$IDENTITY" "$APP"
-codesign --verify --deep --strict "$APP"
-note "✓ built and signed"
+  cd "$REPO_DIR"
+  APP="$REPO_DIR/src-tauri/target/release/bundle/macos/ProDeck.app"
+  rm -rf "$APP"
+  BUILD_ARGS=(build --bundles app)
+  [ -f "$LOCAL_CONF" ] && BUILD_ARGS+=(--config "$LOCAL_CONF")
+  if [ -f "$HOME/.prodeck/updater.key" ]; then
+    TAURI_SIGNING_PRIVATE_KEY="$(cat "$HOME/.prodeck/updater.key")" npm run tauri -- "${BUILD_ARGS[@]}" || true
+  else
+    npm run tauri -- "${BUILD_ARGS[@]}" || true
+  fi
+  [ -d "$APP" ] || die "Build did not produce $APP — scroll up for the real error."
+  codesign --force --deep --sign "$IDENTITY" "$APP"
+  codesign --verify --deep --strict "$APP"
+  note "✓ built and signed"
 
-say "5/5 · Install + keep-alive"
-mkdir -p "$HOME/Library/LaunchAgents"
-for plist in com.prodeck.watchdog com.prodeck.caffeinate; do
-  cp "$REPO_DIR/deploy/launchagents/$plist.plist" "$HOME/Library/LaunchAgents/"
-done
-bash "$REPO_DIR/scripts/install-local.sh"
+  say "5/5 · Install + keep-alive (macOS)"
+  mkdir -p "$HOME/Library/LaunchAgents"
+  for plist in com.prodeck.watchdog com.prodeck.caffeinate; do
+    cp "$REPO_DIR/deploy/launchagents/$plist.plist" "$HOME/Library/LaunchAgents/"
+  done
+  bash "$REPO_DIR/scripts/install-local.sh"
+fi
+
+if [ "$OS" = "Linux" ]; then
+  say "4/5 · Build (Linux)"
+  cd "$REPO_DIR"
+  BUILD_ARGS=(build --bundles appimage,deb)
+  [ -f "$LOCAL_CONF" ] && BUILD_ARGS+=(--config "$LOCAL_CONF")
+  if [ -f "$HOME/.prodeck/updater.key" ]; then
+    TAURI_SIGNING_PRIVATE_KEY="$(cat "$HOME/.prodeck/updater.key")" npm run tauri -- "${BUILD_ARGS[@]}"
+  else
+    npm run tauri -- "${BUILD_ARGS[@]}"
+  fi
+  note "✓ built"
+
+  say "5/5 · Install + keep-alive (Linux)"
+  bash "$REPO_DIR/scripts/install-linux.sh"
+fi
+
 cat <<'EOM'
 
 Done. ProDeck is installed, running, and will relaunch itself on any crash or
