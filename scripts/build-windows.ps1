@@ -23,6 +23,11 @@ Write-Host "Running frontend tests..." -ForegroundColor Cyan
 npm test
 npx tsc --noEmit
 
+# Before the Rust tests: web.rs embeds dist/ via include_dir! at compile time,
+# so cargo needs the frontend built first. Same reason as in the CI workflow.
+Write-Host "Building the frontend..." -ForegroundColor Cyan
+npm run build
+
 Write-Host "Running Rust tests on Windows..." -ForegroundColor Cyan
 Push-Location (Join-Path $PSScriptRoot "..\src-tauri")
 try {

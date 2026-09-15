@@ -39,6 +39,13 @@ jobs:
           npm test
           npx tsc --noEmit
 
+      # Must come before the Rust tests: web.rs embeds the built frontend with
+      # include_dir!("$CARGO_MANIFEST_DIR/../dist"), which panics at COMPILE
+      # time if dist/ is absent. `npm test` and `tsc --noEmit` don't produce it.
+      # Not a Windows issue — a clean checkout fails the same way on any OS.
+      - name: Build frontend
+        run: npm run build
+
       - name: Test Rust backend
         working-directory: src-tauri
         run: cargo test --locked
