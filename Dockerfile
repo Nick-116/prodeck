@@ -21,7 +21,7 @@ COPY index.html vite.config.ts tsconfig.json tsconfig.node.json ./
 RUN npm run build
 
 # ── Stage 2: backend ─────────────────────────────────────────────────────────
-FROM rust:1.80-bookworm AS backend
+FROM rust:1-bookworm AS backend
 
 # System libraries needed to compile the crate tree:
 #   pkg-config     — used by several *-sys crates to locate libs
