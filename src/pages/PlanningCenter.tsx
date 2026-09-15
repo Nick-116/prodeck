@@ -20,6 +20,7 @@ import { askConfirm } from "../lib/dialogs";
 import { Markdown } from "../lib/markdown";
 import { ProSetlistSwap } from "../components/ProSetlistSwap";
 import { ServiceWizard } from "../components/ServiceWizard";
+import { PcoConnect } from "../components/PcoConnect";
 
 // The page has two jobs that used to share one five-card grid: RUNNING the
 // service (Show Flow + transport) and everything around it (who's here, mics,
@@ -32,9 +33,6 @@ const hhmm = (ts: number) =>
 
 export function PlanningCenter() {
   const pco = usePco();
-  const [appId, setAppId] = useState("");
-  const [secret, setSecret] = useState("");
-  const [connecting, setConnecting] = useState(false);
   const [linkingItem, setLinkingItem] = useState<string | null>(null);
   const [linkQuery, setLinkQuery] = useState("");
   const [tab, setTab] = useState<"people" | "mics" | "setup">("people");
@@ -47,41 +45,8 @@ export function PlanningCenter() {
           <h1>Planning Center</h1>
         </header>
         <div className="center-card">
-          <div className="card connect-card">
-            <div className="card-head">
-              <h3>Connect Planning Center</h3>
-            </div>
-            <p className="hint" style={{ marginTop: 0 }}>
-              Create a Personal Access Token at{" "}
-              <code>api.planningcenteronline.com</code> → Developers → Personal
-              Access Tokens, then paste the Application ID and Secret.
-            </p>
-            <div className="field" style={{ marginBottom: 10 }}>
-              <span>Application ID</span>
-              <input className="input" value={appId} onChange={(e) => setAppId(e.target.value)} />
-            </div>
-            <div className="field" style={{ marginBottom: 14 }}>
-              <span>Secret</span>
-              <input
-                className="input"
-                type="password"
-                value={secret}
-                onChange={(e) => setSecret(e.target.value)}
-              />
-            </div>
-            <button
-              className="btn primary"
-              disabled={connecting || !appId || !secret}
-              onClick={async () => {
-                setConnecting(true);
-                await pco.saveCredentials(appId.trim(), secret.trim());
-                setConnecting(false);
-              }}
-            >
-              {connecting ? "Connecting…" : "Connect"}
-            </button>
-            {pco.status && <p className="error">{pco.status}</p>}
-          </div>
+          <PcoConnect onConnected={() => pco.reconnect()} />
+          {pco.status && <p className="error">{pco.status}</p>}
         </div>
       </div>
     );

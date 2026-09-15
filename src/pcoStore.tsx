@@ -33,7 +33,7 @@ import {
   type PcoLiveAction,
   type PcoController,
   IS_DEMO,
-} from "./lib/tauri";
+  pcoOauthStatus,} from "./lib/tauri";
 import { normTitle, bestMatch } from "./lib/match";
 
 export interface ServiceType {
@@ -574,6 +574,8 @@ function currentServiceTime(times: ServiceTime[]): string | null {
 
 interface PcoStore {
   credsKnown: boolean;
+  /** Re-check the connection after signing in (or pasting a token). */
+  reconnect: () => Promise<void>;
   me: string | null;
   status: string;
   /** pco.json is present but unreadable. Nothing is persisted while this is set. */
@@ -787,9 +789,15 @@ export function PcoProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function saveCredentials(appId: string, secret: string) {
-    const s = await getSettings();
-    await updateSettings({ ...s, pco_app_id: appId, pco_secret: secret });
+  /**
+   * Prove the booth can reach Planning Center and open the page for business.
+   *
+   * Deliberately asks the API rather than checking which credential is stored:
+   * there are now two ways to be connected (an OAuth sign-in and a pasted
+   * token pair), the backend picks between them, and the only thing the UI
+   * actually cares about is whether a request comes back.
+   */
+  async function reconnect() {
     setStatus("Verifying…");
     try {
       const meJson = await pcoTest();
@@ -801,6 +809,12 @@ export function PcoProvider({ children }: { children: ReactNode }) {
       setCredsKnown(false);
       setStatus(String(e));
     }
+  }
+
+  async function saveCredentials(appId: string, secret: string) {
+    const s = await getSettings();
+    await updateSettings({ ...s, pco_app_id: appId, pco_secret: secret });
+    await reconnect();
   }
 
   async function loadPlans(stId: string) {
@@ -1663,7 +1677,15 @@ export function PcoProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     (async () => {
       const s = await getSettings().catch(() => null);
-      const hasCreds = !!(s?.pco_app_id && s?.pco_secret);
+      // An OAuth sign-in stores nothing in settings — its tokens live in their
+      // own file, out of reach of the browser — so "is there a token pair?" is
+      // no longer the question. Ask the backend, which knows about both.
+      let hasCreds = !!(s?.pco_app_id && s?.pco_secret);
+      if (!hasCreds) {
+        hasCreds = await pcoOauthStatus()
+          .then((o) => o.connected)
+          .catch(() => false);
+      }
       setCredsKnown(hasCreds);
 
       // A REJECTION means pco.json exists but could not be read. That is not
@@ -1812,6 +1834,7 @@ export function PcoProvider({ children }: { children: ReactNode }) {
 
   const value: PcoStore = {
     credsKnown,
+    reconnect,
     me,
     status,
     dataError,

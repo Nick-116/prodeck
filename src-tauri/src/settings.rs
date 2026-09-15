@@ -19,6 +19,11 @@ pub struct Settings {
     pub theme: String,
     pub pco_app_id: Option<String>,
     pub pco_secret: Option<String>,
+    /// Client ID of the church's OWN Planning Center OAuth application, when
+    /// they'd rather not connect through ProDeck's. Not a secret — a public
+    /// OAuth application has no secret, which is the whole point of the flow
+    /// in `pcoauth`. Empty means "use ProDeck's own application".
+    pub pco_client_id: Option<String>,
     pub spl_calibration: f64,
     /// Browser access: serve the dashboards over HTTP on the LAN.
     pub web_enabled: bool,
@@ -204,6 +209,7 @@ impl Default for Settings {
             theme: "dark".into(),
             pco_app_id: None,
             pco_secret: None,
+            pco_client_id: None,
             spl_calibration: 100.0,
             web_enabled: false,
             web_port: 8088,

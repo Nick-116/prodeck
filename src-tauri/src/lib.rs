@@ -18,6 +18,7 @@ mod osc;
 mod pages;
 mod posfiles;
 mod pco;
+mod pcoauth;
 mod push;
 mod propresenter;
 mod relay;
@@ -170,6 +171,11 @@ pub fn run() {
         .manage(Arc::new(Mutex::new(avantis::AvantisInner::default())) as avantis::AvantisState)
         .manage(ga4::new_state())
         .setup(move |app| {
+            // So a Planning Center token refresh that fails in the background
+            // can tell the UI to ask for a reconnect, rather than leaving the
+            // plan silently empty.
+            pcoauth::init(app.handle().clone());
+
             // Sleep guard (Settings → Reliability), on by default: a booth Mac
             // that dozes off takes everything in the room down with it.
             {
@@ -253,6 +259,9 @@ pub fn run() {
             pco::pco_set_live_interval,
             pco::pco_live_action,
             pco::pco_live_controller,
+            pcoauth::pco_oauth_begin,
+            pcoauth::pco_oauth_status,
+            pcoauth::pco_oauth_disconnect,
             // Audio
             audio::list_audio_inputs,
             audio::default_audio_input,

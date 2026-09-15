@@ -314,6 +314,7 @@ const SETTINGS_OVERLAY: Record<string, unknown> = {
   // secret. These are placeholders — demo mode never reaches Planning Center.
   pco_app_id: "demo",
   pco_secret: "demo",
+  pco_client_id: null,
   web_enabled: true,
   web_port: 8088,
   web_invite_token: "demotoken",

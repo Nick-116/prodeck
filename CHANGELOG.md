@@ -35,6 +35,63 @@ numbers below are the ones shown in **Settings → Software Update**.
 
 ---
 
+## Unreleased
+
+### Planning Center: press Connect instead of hunting for a token
+
+Connecting Planning Center was eight steps through a developer site most
+worship pastors have never seen, ending in an Application ID and a Secret
+pasted into ProDeck. That is now a button.
+
+Open **Planning Center → Connect**. Your browser opens Planning Center's own
+sign-in page, you approve ProDeck there, and the page fills in behind you. No
+password and no token is ever typed into ProDeck or stored by it.
+
+What you're approving is deliberately small: **Services** (the plan, its
+running order, the team and LIVE) and **People** (only so ProDeck can show
+whose account it's connected as). Nothing else — not Giving, not Check-Ins. You
+can see the connection in your Planning Center account and revoke it there, or
+press **Disconnect** in ProDeck.
+
+**Your existing setup keeps working, untouched.** A Personal Access Token is
+still a supported way in — it's under *Use a Personal Access Token instead* on
+the same panel, and nothing needs to change on a booth that already has one.
+Worth knowing, though: that token is a password that never expires and carries
+its creator's entire Planning Center account, which is the reason signing in is
+now the recommended route.
+
+One thing to expect on a copy that hasn't been told which Planning Center
+application to sign in through: instead of a Connect button you'll see a short
+numbered list and a **Client ID** box. An Organization Administrator creates the
+application once, in about five minutes; ProDeck shows the exact three redirect
+addresses to paste. Help → *Registering a Planning Center application* walks
+through it.
+
+### Windows copies now update themselves
+
+Windows installs check the same update feed the Mac does and offer new versions
+in the same banner. Installing runs silently — current-user, no admin prompt.
+
+The installer in each release is signed with ProDeck's update key and the app
+refuses anything that key doesn't vouch for, so a Windows build downloaded from
+the Actions tab (or from a release published before this) has no matching entry
+and will simply report "up to date". Download once more from the
+[Releases page](https://github.com/whiteoakmedia/prodeck/releases/latest) and it
+stays current from then on.
+
+Windows build and packaging by
+[@jpeters0](https://github.com/jpeters0).
+
+### Fixed — a long Sunday could quietly stop refreshing Planning Center
+
+The plan sync resolved its Planning Center credentials once, when you pressed
+Start, and reused them for as long as it ran. That was fine for a pasted token,
+which never expires — but not for a signed-in connection, whose access is
+renewed every couple of hours. It now re-resolves every tick, so a sync started
+at 7am is still live at 1pm.
+
+---
+
 ## 0.9.85 — 15 September 2026
 
 ### Fixed — first-run setup crashed the app on a brand-new install

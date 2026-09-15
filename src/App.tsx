@@ -11,6 +11,7 @@ import {
   on,
   IS_DEMO,
   setDemo,
+  pcoOauthStatus,
 } from "./lib/tauri";
 import { KioskPage } from "./pages/Kiosk";
 import { ChatProvider, useChat } from "./chatStore";
@@ -144,7 +145,14 @@ function Shell() {
   useEffect(() => {
     if (IS_WEB || firstRouteDone.current || settings === null) return;
     firstRouteDone.current = true;
-    if (isFreshInstall(settings)) setPage("setup");
+    // A Planning Center OAuth sign-in leaves no trace in settings, so ask the
+    // backend before concluding this booth has never been set up.
+    void pcoOauthStatus()
+      .then((o) => o.connected)
+      .catch(() => false)
+      .then((pco) => {
+        if (isFreshInstall(settings, pco)) setPage("setup");
+      });
   }, [settings === null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const checklists = useChecklists();

@@ -22,6 +22,7 @@ const B64: base64::engine::general_purpose::GeneralPurpose =
 /// add it here too, or a restore will lose it.
 const FILES: &[&str] = &[
     "settings.json",   // every connection setting and secret
+    "pco-oauth.json",  // Planning Center OAuth tokens (see pcoauth.rs)
     "dashboards.json", // layouts
     "pco.json",        // mic assignments, key/leader overrides, plan links
     "identity.json",   // crew accounts, PINs, PCO links

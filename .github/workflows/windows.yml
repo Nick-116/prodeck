@@ -6,11 +6,6 @@ on:
   push:
     branches:
       - windows-harbor
-  # Publishing a release builds the Windows installer and attaches it, so the
-  # .exe is downloadable from the Releases page like the macOS DMG — not just
-  # from the Actions tab, which needs a login and expires after 90 days.
-  release:
-    types: [published]
 
 jobs:
   build-windows:
@@ -65,24 +60,9 @@ jobs:
           path: src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
 
-  # Separate job so the build above keeps its read-only token. Only a published
-  # release gets write access, and only to attach the installer it just built.
-  attach-to-release:
-    if: github.event_name == 'release'
-    needs: build-windows
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - name: Fetch the built installer
-        uses: actions/download-artifact@v4
-        with:
-          name: ProDeck-Windows-x64
-          path: installer
-
-      - name: Attach it to the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" installer/*.exe --clobber --repo "${{ github.repository }}"
-
+# NO attach-on-release job, deliberately. scripts/release-public.sh dispatches
+# this workflow for the release commit, waits for it, downloads THIS .exe, signs
+# it with the minisign updater key (which only lives on the release Mac) and
+# attaches that exact file. A job here that built its own copy and uploaded it
+# over ours would replace signed bytes with unsigned-but-different ones, and
+# every Windows auto-update would then fail signature verification.

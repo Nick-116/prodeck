@@ -269,6 +269,7 @@ export interface Settings {
   theme: string;
   pco_app_id: string | null;
   pco_secret: string | null;
+  pco_client_id: string | null;
   spl_calibration: number;
   web_enabled: boolean;
   web_port: number;
@@ -623,6 +624,24 @@ export async function pcoGetAll(path: string): Promise<Json> {
   return merged ?? ({} as Json);
 }
 export const pcoTest = () => invoke<Json>("pco_test");
+
+/** Planning Center sign-in (OAuth). Desktop only — the flow needs a loopback
+ * listener on the booth, so a phone or kiosk can't start one. */
+export type PcoOauthStatus = {
+  connected: boolean;
+  who: string;
+  scope: string;
+  /** False until an OAuth application is configured; the Connect button is
+   *  meaningless before then and the UI shows the registration steps instead. */
+  configured: boolean;
+  /** The client id came from this church's own settings, not ProDeck's. */
+  own_app: boolean;
+  /** Exactly what to paste into the application's redirect-URI field. */
+  redirect_uris: string[];
+};
+export const pcoOauthStatus = () => invoke<PcoOauthStatus>("pco_oauth_status");
+export const pcoOauthBegin = () => invoke<{ url: string }>("pco_oauth_begin");
+export const pcoOauthDisconnect = () => invoke<void>("pco_oauth_disconnect");
 export const pcoStartSync = (serviceTypeId: string, planId: string) =>
   invoke<void>("pco_start_sync", { serviceTypeId, planId });
 export const pcoStopSync = () => invoke<void>("pco_stop_sync");

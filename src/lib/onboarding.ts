@@ -8,9 +8,17 @@ import type { Settings } from "./tauri";
  * `pp_host` defaults to "localhost", so testing it for emptiness never
  * detected a fresh install. `pp_auto_connect` is false until ProPresenter has
  * actually connected once, which is the signal we want.
+ *
+ * `pcoConnected` exists because a Planning Center OAuth sign-in leaves NOTHING
+ * in settings — its tokens live in their own file, deliberately out of the
+ * browser's reach — so `pco_app_id` can't see it. Callers that know the sign-in
+ * state pass it; the default keeps the old behaviour for callers that don't.
+ * Getting this wrong is not cosmetic: a booth that looks fresh forever reopens
+ * the walkthrough on every launch, which is exactly the loop a Windows install
+ * hit in 0.9.85.
  */
-export function isFreshInstall(s: Settings): boolean {
-  return !s.pp_auto_connect && !s.pco_app_id && !s.web_enabled;
+export function isFreshInstall(s: Settings, pcoConnected = false): boolean {
+  return !s.pp_auto_connect && !s.pco_app_id && !pcoConnected && !s.web_enabled;
 }
 
 const DONE_KEY = "prodeck.setupDone";

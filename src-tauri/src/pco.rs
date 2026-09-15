@@ -2,7 +2,7 @@ use crate::settings::SettingsState;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 const PCO_BASE: &str = "https://api.planningcenteronline.com";
 
@@ -146,6 +146,72 @@ pub fn short_name(name: &str) -> String {
 
 pub type PcoState = Arc<PcoInner>;
 
+/// How to authenticate a Planning Center request.
+///
+/// Two ways in, and both stay supported. `Bearer` is the OAuth sign-in
+/// (`pcoauth`) — the one a new church gets walked through. `Pat` is the
+/// original Application ID + Secret, which every existing install is running
+/// on and which is still the answer for a church that would rather not
+/// register an OAuth application at all.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Auth {
+    /// Personal Access Token, sent as HTTP basic.
+    Pat { id: String, secret: String },
+    /// OAuth access token. Short-lived; `pcoauth` renews it underneath us.
+    Bearer(String),
+}
+
+impl Auth {
+    fn apply(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match self {
+            Auth::Pat { id, secret } => rb.basic_auth(id, Some(secret)),
+            Auth::Bearer(t) => rb.bearer_auth(t),
+        }
+    }
+    fn is_oauth(&self) -> bool {
+        matches!(self, Auth::Bearer(_))
+    }
+}
+
+/// Pick the credential for the next request.
+///
+/// OAuth wins whenever a sign-in is live. A church that connects properly
+/// should stop using a pasted token they may have forgotten is still sitting in
+/// settings — and if they later disconnect, the pasted one quietly takes over
+/// again instead of the app going dark.
+pub(crate) async fn auth(settings: &SettingsState) -> Result<Auth, String> {
+    if let Some(t) = crate::pcoauth::access_token(settings).await {
+        return Ok(Auth::Bearer(t));
+    }
+    let (id, secret) = creds(settings)?;
+    Ok(Auth::Pat { id, secret })
+}
+
+/// An authenticated GET, renewing the OAuth token once if the API says it is
+/// stale. The proactive refresh in `pcoauth` handles the ordinary case; this
+/// covers a token that died early — the clock drifted, or someone revoked and
+/// re-approved ProDeck from their Planning Center account while it was running.
+pub(crate) async fn request_coded_for(
+    settings: &SettingsState,
+    path: &str,
+) -> Result<serde_json::Value, (u16, String)> {
+    let a = auth(settings).await.map_err(|e| (0, e))?;
+    match pco_request_coded(&a, path).await {
+        Err((401, msg)) if a.is_oauth() => match crate::pcoauth::refresh_now(settings).await {
+            Some(t) => pco_request_coded(&Auth::Bearer(t), path).await,
+            None => Err((401, msg)),
+        },
+        other => other,
+    }
+}
+
+pub(crate) async fn request_for(
+    settings: &SettingsState,
+    path: &str,
+) -> Result<serde_json::Value, String> {
+    request_coded_for(settings, path).await.map_err(|(_, m)| m)
+}
+
 pub(crate) fn creds(settings: &SettingsState) -> Result<(String, String), String> {
     let s = settings.lock().unwrap_or_else(|p| p.into_inner());
     // Trim on USE, not just on entry. A pasted token often carries a trailing
@@ -157,24 +223,40 @@ pub(crate) fn creds(settings: &SettingsState) -> Result<(String, String), String
     let a = s.pco_app_id.clone().unwrap_or_default().trim().to_string();
     let b = s.pco_secret.clone().unwrap_or_default().trim().to_string();
     if a.is_empty() || b.is_empty() {
-        return Err("Planning Center credentials not set (add them on the Planning Center page)".into());
+        return Err("Planning Center isn't connected. Open the Planning Center page and \
+                    press Connect."
+            .into());
     }
     Ok((a, b))
 }
 
 /// Planning Center answers a bad credential with a bare 401 and an empty body,
 /// which surfaced to operators as "PCO 401 Unauthorized:" — true, and useless.
-/// The overwhelmingly common cause is the wrong kind of credential: PCO's
-/// developer site offers both OAuth *applications* (Client ID/Secret, which do
-/// NOT work here) and Personal Access Tokens (which do), and they look alike.
-pub(crate) fn explain_pco_error(code: u16, status: &str, body: &str) -> String {
+///
+/// The right advice depends entirely on which way in this booth uses, and the
+/// two have opposite causes. On a pasted token pair, a 401 almost always means
+/// the wrong *kind* of credential was pasted. On an OAuth sign-in, the
+/// credential was right once and has since been withdrawn — there is nothing to
+/// re-type, and telling someone to check their Application ID sends them
+/// hunting for a field that isn't on their screen.
+pub(crate) fn explain_pco_error(code: u16, status: &str, body: &str, oauth: bool) -> String {
     match code {
+        401 if oauth => "Planning Center no longer accepts this connection. It was most \
+                likely revoked from your Planning Center account, or left unused past its \
+                90-day limit.\n\
+                • Open the Planning Center page and press Connect to sign in again. \
+                Nothing else needs changing."
+            .to_string(),
         401 => "Planning Center rejected these credentials.\n\
                 • They must be a Personal Access Token — at api.planningcenteronline.com, \
                 open Personal Access Tokens and create one. A Client ID/Secret from an \
                 OAuth application will always fail here, and the two look almost identical.\n\
                 • Check the Application ID and Secret aren't swapped, and that neither \
-                picked up a stray space when pasted."
+                picked up a stray space when pasted.\n\
+                • Or skip the token entirely and press Connect to sign in instead."
+            .to_string(),
+        403 if oauth => "Planning Center accepted the sign-in but refused this data. The \
+                account that approved ProDeck needs access to Services in your organization."
             .to_string(),
         403 => "Planning Center accepted the credentials but refused this data. The token's \
                 account needs access to Services in your organization."
@@ -191,12 +273,8 @@ pub(crate) fn explain_pco_error(code: u16, status: &str, body: &str) -> String {
     }
 }
 
-pub(crate) async fn pco_request(
-    app_id: &str,
-    secret: &str,
-    path: &str,
-) -> Result<serde_json::Value, String> {
-    pco_request_coded(app_id, secret, path).await.map_err(|(_, msg)| msg)
+pub(crate) async fn pco_request(auth: &Auth, path: &str) -> Result<serde_json::Value, String> {
+    pco_request_coded(auth, path).await.map_err(|(_, msg)| msg)
 }
 
 /// `pco_request` that keeps the HTTP status code.
@@ -207,8 +285,7 @@ pub(crate) async fn pco_request(
 /// working the moment that text was rewritten to be readable. Network failures
 /// (no response at all) report code 0, which is never mistaken for a 404.
 pub(crate) async fn pco_request_coded(
-    app_id: &str,
-    secret: &str,
+    auth: &Auth,
     path: &str,
 ) -> Result<serde_json::Value, (u16, String)> {
     let url = if path.starts_with("http") {
@@ -220,9 +297,8 @@ pub(crate) async fn pco_request_coded(
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| (0, e.to_string()))?;
-    let resp = client
-        .get(&url)
-        .basic_auth(app_id, Some(secret))
+    let resp = auth
+        .apply(client.get(&url))
         .header("User-Agent", "ProDeck/0.1")
         .send()
         .await
@@ -232,7 +308,7 @@ pub(crate) async fn pco_request_coded(
         let body = resp.text().await.unwrap_or_default();
         let snippet: String = body.chars().take(300).collect();
         let code = status.as_u16();
-        return Err((code, explain_pco_error(code, &status.to_string(), &snippet)));
+        return Err((code, explain_pco_error(code, &status.to_string(), &snippet, auth.is_oauth())));
     }
     resp.json().await.map_err(|e| (0, e.to_string()))
 }
@@ -243,9 +319,9 @@ mod cred_tests {
 
     #[test]
     fn a_401_names_the_actual_mistake() {
-        let m = explain_pco_error(401, "401 Unauthorized", "");
-        // The failure mode that actually happens: an OAuth app's Client ID and
-        // Secret pasted in place of a Personal Access Token.
+        let m = explain_pco_error(401, "401 Unauthorized", "", false);
+        // On a pasted pair, the failure that actually happens: an OAuth app's
+        // Client ID and Secret pasted in place of a Personal Access Token.
         assert!(m.contains("Personal Access Token"), "{m}");
         assert!(m.contains("OAuth"), "{m}");
         assert!(m.contains("space"), "should mention pasted whitespace: {m}");
@@ -254,14 +330,29 @@ mod cred_tests {
     }
 
     #[test]
+    fn a_401_on_a_signed_in_booth_says_reconnect() {
+        // Same status, opposite advice. Someone who signed in has no
+        // Application ID to check and no Secret to re-paste; sending them to
+        // look for those fields is sending them somewhere that doesn't exist.
+        let m = explain_pco_error(401, "401 Unauthorized", "", true);
+        assert!(m.contains("Connect"), "{m}");
+        assert!(!m.contains("Application ID"), "{m}");
+        assert!(!m.contains("Personal Access Token"), "{m}");
+        // The two real causes of a dead sign-in.
+        assert!(m.contains("revoked") && m.contains("90-day"), "{m}");
+    }
+
+    #[test]
     fn other_statuses_stay_distinct_and_honest() {
-        assert!(explain_pco_error(403, "403 Forbidden", "").contains("Services"));
-        assert!(explain_pco_error(429, "429", "").contains("rate-limit"));
-        assert!(explain_pco_error(503, "503 Service Unavailable", "").contains("Nothing to fix"));
-        // An unknown code with a body still shows the body rather than eating it.
-        assert!(explain_pco_error(418, "418 I'm a teapot", "short and stout").contains("short and stout"));
-        // An unknown code with no body doesn't render a dangling colon.
-        assert!(!explain_pco_error(418, "418", "   ").ends_with(": "));
+        for oauth in [false, true] {
+            assert!(explain_pco_error(403, "403 Forbidden", "", oauth).contains("Services"));
+            assert!(explain_pco_error(429, "429", "", oauth).contains("rate-limit"));
+            assert!(explain_pco_error(503, "503 Service Unavailable", "", oauth).contains("Nothing to fix"));
+            // An unknown code with a body still shows the body rather than eating it.
+            assert!(explain_pco_error(418, "418 I'm a teapot", "short and stout", oauth).contains("short and stout"));
+            // An unknown code with no body doesn't render a dangling colon.
+            assert!(!explain_pco_error(418, "418", "   ", oauth).ends_with(": "));
+        }
     }
 
     /// Three call sites used to detect "no live item" / "nobody is controlling"
@@ -273,7 +364,7 @@ mod cred_tests {
     #[test]
     fn coded_errors_carry_a_parseable_status() {
         use super::coded_msg;
-        let m = coded_msg(404, &explain_pco_error(404, "404 Not Found", ""));
+        let m = coded_msg(404, &explain_pco_error(404, "404 Not Found", "", false));
         assert!(m.starts_with("PCO/404 "), "{m}");
         // What PcoError does: strip the prefix, keep the readable half.
         let (head, rest) = m.split_once(' ').expect("prefix and message");
@@ -294,8 +385,7 @@ pub async fn pco_get(
     path: String,
     settings: tauri::State<'_, SettingsState>,
 ) -> Result<serde_json::Value, String> {
-    let (a, b) = creds(&settings)?;
-    pco_get_for_ui(&a, &b, &path).await
+    request_coded_for(&settings, &path).await.map_err(|(code, msg)| coded_msg(code, &msg))
 }
 
 /// The exact contract the `pco_get` command exposes to the UI: the HTTP status
@@ -307,11 +397,10 @@ pub async fn pco_get(
 /// otherwise a phone's live-item tracking behaves differently from the booth's,
 /// which is exactly the class of bug this replaced.
 pub(crate) async fn pco_get_for_ui(
-    app_id: &str,
-    secret: &str,
+    auth: &Auth,
     path: &str,
 ) -> Result<serde_json::Value, String> {
-    pco_request_coded(app_id, secret, path).await.map_err(|(code, msg)| coded_msg(code, &msg))
+    pco_request_coded(auth, path).await.map_err(|(code, msg)| coded_msg(code, &msg))
 }
 
 /// Follow `links.next` until the collection is exhausted, merging `data` and
@@ -323,8 +412,7 @@ pub(crate) async fn pco_get_for_ui(
 /// indication. It bites first on a plan whose songs carry several chord charts
 /// each: past the hundredth attachment, the charts simply were not there.
 pub(crate) async fn pco_get_all(
-    app_id: &str,
-    secret: &str,
+    auth: &Auth,
     path: &str,
 ) -> Result<serde_json::Value, String> {
     let mut merged: Option<serde_json::Value> = None;
@@ -333,7 +421,7 @@ pub(crate) async fn pco_get_all(
     // `links.next` from looping forever.
     for _ in 0..20 {
         let Some(url) = next.take() else { break };
-        let page = pco_request(app_id, secret, &url).await?;
+        let page = pco_request(auth, &url).await?;
         next = page
             .pointer("/links/next")
             .and_then(|v| v.as_str())
@@ -366,19 +454,17 @@ fn coded_msg(code: u16, msg: &str) -> String {
 pub async fn pco_test(
     settings: tauri::State<'_, SettingsState>,
 ) -> Result<serde_json::Value, String> {
-    let (a, b) = creds(&settings)?;
-    pco_request(&a, &b, "people/v2/me").await
+    request_for(&settings, "people/v2/me").await
 }
 
-pub(crate) async fn pco_post(app_id: &str, secret: &str, path: &str) -> Result<serde_json::Value, String> {
+pub(crate) async fn pco_post(auth: &Auth, path: &str) -> Result<serde_json::Value, String> {
     let url = format!("{}/{}", PCO_BASE, path.trim_start_matches('/'));
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| e.to_string())?;
-    let resp = client
-        .post(&url)
-        .basic_auth(app_id, Some(secret))
+    let resp = auth
+        .apply(client.post(&url))
         .header("User-Agent", "ProDeck/0.1")
         .header("Content-Length", "0")
         .send()
@@ -405,12 +491,12 @@ pub async fn pco_live_action(
     if !allowed.contains(&action.as_str()) {
         return Err(format!("unsupported live action: {action}"));
     }
-    let (a, b) = creds(&settings)?;
+    let a = auth(&settings).await?;
     let path = format!(
         "services/v2/service_types/{}/plans/{}/live/{}",
         service_type_id, plan_id, action
     );
-    pco_post(&a, &b, &path).await
+    pco_post(&a, &path).await
 }
 
 /// Who currently holds the Services LIVE controller, and who we are.
@@ -424,12 +510,11 @@ pub async fn pco_live_controller(
     plan_id: String,
     settings: tauri::State<'_, SettingsState>,
 ) -> Result<serde_json::Value, String> {
-    let (a, b) = creds(&settings)?;
     let path = format!(
         "services/v2/service_types/{}/plans/{}/live/controller",
         service_type_id, plan_id
     );
-    let (controller_id, controller_name) = match pco_request_coded(&a, &b, &path).await {
+    let (controller_id, controller_name) = match request_coded_for(&settings, &path).await {
         Ok(v) => (
             v.pointer("/data/id").and_then(|x| x.as_str()).map(str::to_string),
             v.pointer("/data/attributes/full_name")
@@ -441,7 +526,7 @@ pub async fn pco_live_controller(
         Err((404, _)) => (None, None),
         Err((_, msg)) => return Err(msg),
     };
-    let me_id = pco_request(&a, &b, "people/v2/me")
+    let me_id = request_for(&settings, "people/v2/me")
         .await
         .ok()
         .and_then(|v| v.pointer("/data/id").and_then(|x| x.as_str()).map(str::to_string));
@@ -485,7 +570,9 @@ pub async fn pco_start_sync(
     state: tauri::State<'_, PcoState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let (app_id, secret) = creds(&settings)?;
+    // Fail fast if there's no credential at all, so pressing Start reports the
+    // problem instead of spawning a task that quietly fetches nothing.
+    auth(&settings).await?;
 
     // Claim this sync as the latest; any task from a previous plan will see a
     // newer epoch and stop, so two weeks can't poll/emit at once.
@@ -507,14 +594,29 @@ pub async fn pco_start_sync(
         let mut first = true;
         let mut last_meta = tokio::time::Instant::now();
         while current(&running) {
+            // Resolved per tick, not once before the loop. An OAuth access
+            // token lives two hours; a sync started Sunday morning and left
+            // running would have kept presenting the same dead token all day.
+            // `auth` hands back a renewed one (or the pasted token pair, when
+            // that's what this church uses) without the loop knowing which.
+            let st = app2.state::<SettingsState>();
+            let a = match auth(st.inner()).await {
+                Ok(a) => a,
+                // Nothing to fetch with. Don't tear the sync down — a refresh
+                // can fail on a dropped network and recover on the next tick.
+                Err(_) => {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    continue;
+                }
+            };
             // Slower-moving data: items + team on the first tick, then every ~30s.
             if first || last_meta.elapsed() >= Duration::from_secs(30) {
-                if let Ok(v) = pco_get_all(&app_id, &secret, &items_path(&service_type_id, &plan_id)).await {
+                if let Ok(v) = pco_get_all(&a, &items_path(&service_type_id, &plan_id)).await {
                     if current(&running) {
                         app2.emit("pco:items", v).ok();
                     }
                 }
-                if let Ok(v) = pco_get_all(&app_id, &secret, &team_path(&service_type_id, &plan_id)).await {
+                if let Ok(v) = pco_get_all(&a, &team_path(&service_type_id, &plan_id)).await {
                     if current(&running) {
                         *running.team.lock().unwrap_or_else(|p| p.into_inner()) = parse_team(&v);
                         app2.emit("pco:team", v).ok();
@@ -524,8 +626,7 @@ pub async fn pco_start_sync(
                 // plan item, the song, or the arrangement. all_attachments is
                 // PCO's aggregate of every one of those for this plan.
                 if let Ok(v) = pco_get_all(
-                    &app_id,
-                    &secret,
+                    &a,
                     &format!(
                         "services/v2/service_types/{}/plans/{}/all_attachments?per_page=100",
                         service_type_id, plan_id
@@ -541,8 +642,7 @@ pub async fn pco_start_sync(
                 // pco_get (admin-only), so this event is their ONLY source for
                 // the countdown and per-person call times.
                 if let Ok(v) = pco_request(
-                    &app_id,
-                    &secret,
+                    &a,
                     &format!(
                         "services/v2/service_types/{}/plans/{}/plan_times?per_page=100",
                         service_type_id, plan_id
@@ -558,8 +658,7 @@ pub async fn pco_start_sync(
             }
             first = false;
             // LIVE current item — may 404 when the plan isn't live; that's fine.
-            let live =
-                pco_request_coded(&app_id, &secret, &live_path(&service_type_id, &plan_id)).await;
+            let live = pco_request_coded(&a, &live_path(&service_type_id, &plan_id)).await;
             if current(&running) {
                 match live {
                     Ok(v) => {
@@ -616,8 +715,8 @@ pub async fn pco_attachment_open(
     id: String,
     settings: tauri::State<'_, SettingsState>,
 ) -> Result<serde_json::Value, String> {
-    let (a, b) = creds(&settings)?;
-    pco_post(&a, &b, &format!("services/v2/attachments/{id}/open")).await
+    let a = auth(&settings).await?;
+    pco_post(&a, &format!("services/v2/attachments/{id}/open")).await
 }
 
 /// Raw chord chart + lyrics for an arrangement — the in-app chart renderer's
@@ -634,10 +733,8 @@ pub async fn pco_chord_chart(
     {
         return Err("bad ids".into());
     }
-    let (a, b) = creds(&settings)?;
-    let v = pco_request(
-        &a,
-        &b,
+    let v = request_for(
+        &settings,
         &format!("services/v2/songs/{song_id}/arrangements/{arrangement_id}"),
     )
     .await?;

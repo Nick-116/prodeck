@@ -15,11 +15,37 @@ loading, diagnostic commands, file URLs, and opening printable reports. They
 must be compiled and tested on real Windows hardware before this build should
 be trusted during a service.
 
-## Download a test installer
+## Install
 
-Open the repository's **Actions** tab, run **Windows build**, then download the
-`ProDeck-Windows-x64` artifact. Extract it and run the NSIS installer. The test
-build is unsigned, so Windows may show a SmartScreen warning.
+Take `ProDeck_<version>_x64-setup.exe` from the
+[latest release](https://github.com/whiteoakmedia/prodeck/releases/latest) and
+run it. It installs for the current user, so there is no admin prompt. The
+installer is not Authenticode-signed, so Windows SmartScreen will warn once —
+**More info → Run anyway**.
+
+For a build of an unreleased commit, open the repository's **Actions** tab, run
+**Windows build**, and download the `ProDeck-Windows-x64` artifact instead.
+
+## Updates
+
+Windows installs update themselves, the same way the Mac build does. At launch
+ProDeck reads
+`releases/latest/download/latest.json`; if its `windows-x86_64` entry names a
+newer version, the banner offers it and installing runs the new setup silently
+(NSIS passive mode, current-user, no admin prompt).
+
+The installer in that feed is signed with the project's minisign updater key,
+and ProDeck refuses any download the key doesn't vouch for. That key only lives
+on the release Mac, so the flow is: `scripts/release-public.sh` dispatches the
+**Windows build** workflow for the release commit, waits for it, downloads that
+exact `.exe`, signs it, and attaches it to the release. CI deliberately does
+*not* attach an installer of its own — a second build would produce different
+bytes, and every Windows update would then fail signature verification.
+
+Consequence worth knowing: a Windows copy installed from an Actions artifact,
+or from a release published before this existed, has no matching feed entry for
+its build and simply reports "up to date" until the next release. Download once
+more from the Releases page and it is on the update channel from then on.
 
 ## Build locally
 

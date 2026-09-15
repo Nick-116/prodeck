@@ -245,7 +245,7 @@
     <tr><th>Component</th><th>Requirement</th></tr>
     <tr><td><strong>A Mac in the booth</strong></td><td><span class="chip req">REQUIRED</span> Intel or Apple Silicon (macOS 10.15+), always on, always awake. This is the server for everything. There is no Windows or Linux build.</td></tr>
     <tr><td><strong>ProPresenter 7</strong></td><td><span class="chip req">REQUIRED</span> with the network API enabled (Preferences → Network). ProDeck reads slides/playlists/notes and triggers over it.</td></tr>
-    <tr><td><strong>Planning Center Services</strong></td><td><span class="chip req">REQUIRED</span> — plans, teams, and scheduling are the backbone. You create a free Personal Access Token under a PCO admin.</td></tr>
+    <tr><td><strong>Planning Center Services</strong></td><td><span class="chip req">REQUIRED</span> — plans, teams, and scheduling are the backbone. You press <strong>Connect</strong> and approve ProDeck on Planning Center's own page &mdash; it asks for Services and People, nothing else. (A Personal Access Token still works if you prefer one.)</td></tr>
     <tr><td><strong>Cloudflare + a domain</strong></td><td><span class="chip opt">OPTIONAL</span> — only for the crew/cloud/tap features. Free plan suffices; the domain is the only recurring cost.</td></tr>
     <tr><td>Dante / audio interface</td><td><span class="chip opt">OPTIONAL</span> — SPL features take any input the Mac can hear.</td></tr>
     <tr><td>A supported sound console</td><td><span class="chip opt">OPTIONAL</span> &mdash; A&amp;H Avantis / dLive / SQ, or Behringer X32 / Midas M32. Anything else is unsupported.</td></tr>
@@ -333,7 +333,7 @@ brew install node   <span class="c"># or nodejs.org installer</span>
 git clone https://github.com/whiteoakmedia/prodeck.git
 cd prodeck
 bash scripts/setup.sh   <span class="c"># prereqs + config + dev mode, all guided</span></code></pre>
-  <p>First run opens a setup wizard. Point it at ProPresenter (the ProPresenter machine's address (Find discovers it, or read the host and port from ProPresenter → Preferences → Network)) and paste a PCO Personal Access Token (create at <code>api.planningcenteronline.com</code> under any admin account). That's enough to evaluate everything tagged <span class="chip req">CORE</span> in §2 — dashboards, show flow, slide grid, tracking, clear dock — plus SPL if you pick an audio input.</p>
+  <p>First run opens a setup wizard. Point it at ProPresenter (the ProPresenter machine's address (Find discovers it, or read the host and port from ProPresenter → Preferences → Network)) and press <strong>Connect</strong> for Planning Center, which signs you in on <code>planningcenteronline.com</code> itself &mdash; no password or token is typed into ProDeck. That's enough to evaluate everything tagged <span class="chip req">CORE</span> in §2 — dashboards, show flow, slide grid, tracking, clear dock — plus SPL if you pick an audio input.</p>
   <div class="call">
     <p class="call-t">Evaluate against a real week</p>
     <p>Load next Sunday's actual plan and leave a dashboard up through a midweek rehearsal. The value shows up in use, not in a demo click-through.</p>

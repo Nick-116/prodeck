@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { PcoConnect } from "./PcoConnect";
 import { useProDeck } from "../store";
 import { usePco } from "../pcoStore";
 import {
@@ -12,6 +13,7 @@ import {
   IS_WEB,
   PUBLIC_URL,
   type Settings,
+  pcoOauthStatus,
 } from "../lib/tauri";
 import {
   DASHBOARD_TEMPLATES,
@@ -162,9 +164,6 @@ export function FirstRunSetup({ onNavigate }: { onNavigate?: (p: string) => void
   const [stage, setStage] = useState<Stage>("welcome");
 
   // PCO
-  const [appId, setAppId] = useState("");
-  const [secret, setSecret] = useState("");
-  const [pcoBusy, setPcoBusy] = useState(false);
   const [pcoMsg, setPcoMsg] = useState("");
   const [pcoDone, setPcoDone] = useState(false);
 
@@ -209,10 +208,14 @@ export function FirstRunSetup({ onNavigate }: { onNavigate?: (p: string) => void
   useEffect(() => {
     if (IS_WEB || settings === null) return;
     if (readSetupDone()) return;
-    if (isFreshInstall(settings)) {
-      setStage(readStage()); // resume where they left off
-      setOpen(true);
-    }
+    void pcoOauthStatus()
+      .then((o) => o.connected)
+      .catch(() => false)
+      .then((pco) => {
+        if (!isFreshInstall(settings, pco)) return;
+        setStage(readStage()); // resume where they left off
+        setOpen(true);
+      });
   }, [settings === null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -402,21 +405,20 @@ export function FirstRunSetup({ onNavigate }: { onNavigate?: (p: string) => void
     }
   };
 
-  async function savePco() {
-    setPcoBusy(true);
+  // PcoConnect handles both routes in and reports success; all this step adds
+  // is the walkthrough's own "that worked, move on" behaviour. It still tests
+  // the connection itself rather than trusting the callback — advancing past a
+  // sign-in that can't actually read a plan just moves the failure later.
+  async function pcoConnected() {
     setPcoMsg("");
     try {
-      // saveCredentials persists and then self-tests, but swallows the test
-      // failure into pco.status — test explicitly and only advance on success.
-      await pco.saveCredentials(appId.trim(), secret.trim());
       await pcoTest();
+      await pco.reconnect();
       setPcoMsg("✓ Connected to Planning Center");
       setPcoDone(true);
       setTimeout(next, 800);
     } catch (e) {
-      setPcoMsg(`Planning Center rejected those credentials — check the Application ID and Secret. (${String(e)})`);
-    } finally {
-      setPcoBusy(false);
+      setPcoMsg(`Connected, but Planning Center wouldn't answer: ${String(e)}`);
     }
   }
 
@@ -675,20 +677,12 @@ export function FirstRunSetup({ onNavigate }: { onNavigate?: (p: string) => void
             <span className="ob-eyebrow">Step 2 · Essential</span>
             <h1>Connect Planning Center.</h1>
             <p className="ob-lead">
-              Sign in at <code>api.planningcenteronline.com</code> as any
-              Planning Center admin, open <strong>Personal Access Tokens</strong>,
-              create one, and paste it here. It stays on this machine and is never
-              sent anywhere else.
+              ProDeck reads this week's plan, the running order and who's
+              serving. You'll approve it on Planning Center's own page — no
+              password is typed into ProDeck.
             </p>
             <div className="ob-form">
-              <label className="field">
-                <span>Application ID</span>
-                <input className="input" autoComplete="off" value={appId} onChange={(e) => setAppId(e.target.value)} />
-              </label>
-              <label className="field">
-                <span>Secret</span>
-                <input className="input" type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} />
-              </label>
+              <PcoConnect compact onConnected={pcoConnected} />
               {pcoMsg && <p className={pcoMsg.startsWith("✓") ? "ob-ok" : "error small"}>{pcoMsg}</p>}
               {!pcoMsg && state.pco && <StatusLine ok okText="Planning Center is connected." waitText="" />}
             </div>
@@ -696,8 +690,8 @@ export function FirstRunSetup({ onNavigate }: { onNavigate?: (p: string) => void
               <button className="btn ghost" onClick={back}>← Back</button>
               <div className="ob-actions-r">
                 <button className="btn ghost" onClick={next}>Skip for now</button>
-                <button className="btn primary lg" disabled={pcoBusy || !appId.trim() || !secret.trim()} onClick={savePco}>
-                  {pcoBusy ? "Checking…" : "Connect →"}
+                <button className="btn primary lg" disabled={!state.pco} onClick={next}>
+                  {state.pco ? "Next →" : "Waiting for Planning Center…"}
                 </button>
               </div>
             </div>

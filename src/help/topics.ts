@@ -420,21 +420,58 @@ Edit the quick buttons in the widget's edit mode — one per line.`,
   {
     id: "pco-connect",
     group: "Planning Center",
-    title: "Connecting Planning Center (Personal Access Token)",
+    title: "Connecting Planning Center",
     aliases: [
       "pco 401",
       "planning center rejected credentials",
+      "connect planning center",
+      "sign in to planning center",
       "application id and secret",
       "personal access token",
       "nothing loads after entering pco credentials",
+      "disconnect planning center",
     ],
-    body: `Credentials go on the **Planning Center** page (not Settings). You need a **Personal Access Token** — at api.planningcenteronline.com, open *Personal Access Tokens* and create one. It gives you an **Application ID** and a **Secret**; paste both.
+    body: `Go to the **Planning Center** page and press **Connect**. Your browser opens Planning Center's own sign-in page; approve ProDeck there and the page fills in behind you. Pick this week's plan and the team, times and songs load.
 
-> The same site also offers *OAuth applications* with a Client ID and Secret. They look nearly identical and **will not work here**. If ProDeck says the credentials were rejected, this is the usual cause.
+ProDeck asks for two products and no others: **Services** (the plan, its running order, the team and LIVE) and **People** (only to show whose account it's connected as). It never sees your password, and you can revoke it any time — from the **Disconnect** button here, or from your Planning Center account.
 
-The account that created the token needs access to **Services**. ProDeck verifies the credentials before it saves them, then lists your service types and plans. Pick this week's plan and the team, times and songs load.`,
+The sign-in lasts as long as ProDeck keeps running or is opened at least every 90 days. If it does lapse, the page says so and Connect puts it back.
+
+- **"Waiting for your browser…" and nothing happened** — the sign-in opened in whichever browser is your default, which may not be the one you're signed into Planning Center on. Close that tab, press Connect again, and paste the address it shows into the right browser.
+- **Nothing to press but a Client ID box** — this copy of ProDeck has no Planning Center application to sign in through yet. See *Registering a Planning Center application*.
+
+> **Using a Personal Access Token instead** is still supported and is what older installs are running on — it's under *Use a Personal Access Token instead* on the same panel. It works fine, but the token is a password that doesn't expire and carries that person's whole Planning Center account, so signing in is the better option where you have it.`,
     guide: "features",
-    related: ["pco-live"],
+    related: ["pco-register-app", "pco-live"],
+  },
+  {
+    id: "pco-register-app",
+    group: "Planning Center",
+    title: "Registering a Planning Center application",
+    aliases: [
+      "client id",
+      "redirect uri",
+      "oauth application",
+      "public application",
+      "invalid_client",
+      "planning center developers page",
+      "no planning center application configured",
+    ],
+    body: `Signing in needs a Planning Center **application** to sign in through. Most churches never touch this — ProDeck comes with one. You only do this if ProDeck asks for a Client ID, or if you'd rather your church's connection went through your own application.
+
+Only an **Organization Administrator** can create one (Planning Center's rule since March 2023). It takes about five minutes:
+
+1. Go to api.planningcenteronline.com → **Developers** → **My Applications** → **New Application**.
+2. Name it **ProDeck** and set the type to **Public**.
+3. Paste the three redirect URIs ProDeck shows you into the **Redirect URIs** field — all three, exactly as written.
+4. Save, copy the **Client ID**, and paste it into ProDeck.
+
+> A **public** application has no secret. That's correct, not a missing step: anyone who downloads ProDeck has its code, so it can't keep one. The sign-in is protected by PKCE instead, which proves the copy of ProDeck finishing the sign-in is the one that started it.
+
+- **"Planning Center doesn't recognise this Client ID"** — the application is registered as *confidential* rather than *public*. Change its type.
+- **"Planning Center rejected the redirect address"** — one of the three URIs is missing or mistyped. They must match character for character, port numbers included.`,
+    guide: "features",
+    related: ["pco-connect"],
   },
   {
     id: "pco-live",

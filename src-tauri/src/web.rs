@@ -1226,9 +1226,13 @@ fn pp_handle(app: &AppHandle) -> ProPresenterState {
     app.state::<ProPresenterState>().inner().clone()
 }
 
-fn pco_creds(app: &AppHandle) -> Result<(String, String), String> {
+/// The booth's Planning Center credential for a gateway-served request —
+/// OAuth token if the church signed in, the pasted token pair otherwise.
+/// Phones and kiosks never hold a PCO credential of their own; every call they
+/// make is proxied through the booth's.
+async fn pco_auth(app: &AppHandle) -> Result<pco::Auth, String> {
     let st = app.state::<SettingsState>();
-    pco::creds(st.inner())
+    pco::auth(st.inner()).await
 }
 
 // ProPresenter trigger/clear endpoints are GET (a PUT 404s).
@@ -1971,15 +1975,10 @@ async fn dispatch(
             if !song.chars().all(|c| c.is_ascii_digit()) || !arr.chars().all(|c| c.is_ascii_digit()) {
                 return Err("bad ids".into());
             }
-            let (a, b) = {
-                let st = app.state::<SettingsState>();
-                let g = st.lock().unwrap_or_else(|p| p.into_inner());
-                (g.pco_app_id.clone().unwrap_or_default(), g.pco_secret.clone().unwrap_or_default())
-            };
-            if a.is_empty() || b.is_empty() {
-                return Err("Planning Center isn't connected at the booth".into());
-            }
-            let v = crate::pco::pco_request(&a, &b, &format!("services/v2/songs/{song}/arrangements/{arr}")).await?;
+            let a = pco_auth(app)
+                .await
+                .map_err(|_| "Planning Center isn't connected at the booth".to_string())?;
+            let v = crate::pco::pco_request(&a, &format!("services/v2/songs/{song}/arrangements/{arr}")).await?;
             let attrs = v.get("data").and_then(|d| d.get("attributes")).cloned().unwrap_or_default();
             Ok(json!({
                 "chordChart": attrs.get("chord_chart").cloned().unwrap_or(Value::Null),
@@ -1995,18 +1994,10 @@ async fn dispatch(
             if id.is_empty() || !id.chars().all(|c| c.is_ascii_digit()) {
                 return Err("bad attachment id".into());
             }
-            let (a, b) = {
-                let st = app.state::<SettingsState>();
-                let g = st.lock().unwrap_or_else(|p| p.into_inner());
-                (
-                    g.pco_app_id.clone().unwrap_or_default(),
-                    g.pco_secret.clone().unwrap_or_default(),
-                )
-            };
-            if a.is_empty() || b.is_empty() {
-                return Err("Planning Center isn't connected at the booth".into());
-            }
-            crate::pco::pco_post(&a, &b, &format!("services/v2/attachments/{id}/open")).await
+            let a = pco_auth(app)
+                .await
+                .map_err(|_| "Planning Center isn't connected at the booth".to_string())?;
+            crate::pco::pco_post(&a, &format!("services/v2/attachments/{id}/open")).await
         }
         "pco_get" => {
             let path = s("path").ok_or("missing path")?;
@@ -2022,12 +2013,12 @@ async fn dispatch(
             if !ok {
                 return Err("pco_get: path not allowed".into());
             }
-            let (a, b) = pco_creds(app)?;
-            pco::pco_get_for_ui(&a, &b, &path).await
+            let a = pco_auth(app).await?;
+            pco::pco_get_for_ui(&a, &path).await
         }
         "pco_test" => {
-            let (a, b) = pco_creds(app)?;
-            pco::pco_request(&a, &b, "people/v2/me").await
+            let a = pco_auth(app).await?;
+            pco::pco_request(&a, "people/v2/me").await
         }
         "pco_live_action" => {
             let st = s("serviceTypeId").ok_or("missing serviceTypeId")?;
@@ -2037,12 +2028,12 @@ async fn dispatch(
             if !allowed.contains(&action.as_str()) {
                 return Err(format!("unsupported live action: {action}"));
             }
-            let (a, b) = pco_creds(app)?;
+            let a = pco_auth(app).await?;
             let path = format!(
                 "services/v2/service_types/{}/plans/{}/live/{}",
                 st, plan, action
             );
-            pco::pco_post(&a, &b, &path).await
+            pco::pco_post(&a, &path).await
         }
         // ---- NDI (so browser dashboards can pull camera/video feeds over the LAN)
         "ndi_discover_sources" => {

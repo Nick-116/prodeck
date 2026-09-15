@@ -35,6 +35,14 @@ describe("isFreshInstall", () => {
     expect(isFreshInstall(settings({ web_enabled: true }))).toBe(false);
   });
 
+  it("is false once Planning Center is connected by OAuth", () => {
+    // An OAuth sign-in writes nothing into settings, so the settings object
+    // alone still looks untouched. Without the second argument this booth
+    // would be told it was brand new on every single launch.
+    expect(isFreshInstall(settings(), true)).toBe(false);
+    expect(isFreshInstall(settings(), false)).toBe(true);
+  });
+
   it("treats a host typed without connecting as still-fresh", () => {
     // Typing an address is not the same as having reached it, and the setup
     // flow should still offer itself.

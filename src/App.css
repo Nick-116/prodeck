@@ -603,6 +603,59 @@ select.input {
 .connect-card {
   max-width: 420px;
 }
+
+/* Planning Center sign-in. The card is wider than the old two-field form
+   because registering an application is a numbered list with URLs in it. */
+.pco-connect .connect-card,
+.card.connect-card.pco-connect {
+  max-width: 560px;
+}
+.pco-connect .btn.lg {
+  width: 100%;
+}
+.pco-register-steps {
+  margin: 0 0 14px;
+  padding-left: 1.2em;
+  font-size: 13px;
+  line-height: 1.6;
+  opacity: 0.9;
+}
+.pco-register-steps li + li {
+  margin-top: 6px;
+}
+.pco-redirects {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12);
+  font-size: 12px;
+  line-height: 1.5;
+  /* Three URLs that have to be copied verbatim — never wrap them into
+     something that looks like a fourth. */
+  white-space: pre;
+  overflow-x: auto;
+  user-select: all;
+}
+/* The token route stays reachable but doesn't compete with signing in. */
+.pco-token-fallback {
+  margin-top: 18px;
+  border-top: 1px solid rgba(127, 127, 127, 0.22);
+  padding-top: 12px;
+}
+.pco-token-fallback > summary {
+  cursor: pointer;
+  font-size: 13px;
+  opacity: 0.72;
+}
+.pco-token-fallback > summary:hover {
+  opacity: 1;
+}
+.pco-token-fallback .field {
+  margin-top: 10px;
+}
+.pco-connected .btn {
+  margin-top: 4px;
+}
 .discovered {
   display: flex;
   flex-direction: column;
