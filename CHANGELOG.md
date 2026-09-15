@@ -35,6 +35,29 @@ numbers below are the ones shown in **Settings → Software Update**.
 
 ---
 
+## 0.9.85 — 15 September 2026
+
+### Fixed — first-run setup crashed the app on a brand-new install
+
+**If you have been running ProDeck already, this never affected you.** On a
+*fresh* install — a new computer, or a first Windows machine — the welcome
+screen took the whole app down to "ProDeck hit an error" the moment it tried to
+open.
+
+The cause was a React rule: the onboarding screen ran two extra pieces of state
+only after a guard that returns early, so the number of them changed the instant
+the screen opened, and React refused to draw anything. It was introduced in
+0.9.76 alongside the joining window, and it has been broken for every new
+install since — invisible to every existing booth, because an existing booth
+never opens that screen.
+
+Found on the first Windows install, by @jpeters0.
+
+There is now a test that reads every component in the app and fails the build if
+any of them does this again. The same mistake had reached a release twice.
+
+---
+
 ## 0.9.84 — 15 September 2026
 
 ### Windows build — thank you, Peterson

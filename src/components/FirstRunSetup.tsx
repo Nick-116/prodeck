@@ -331,18 +331,19 @@ export function FirstRunSetup({ onNavigate }: { onNavigate?: (p: string) => void
     };
   }, [open, stage]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!open) return null;
-
-  const idx = STAGES.findIndex((s) => s.id === stage);
-  const go = (s: Stage) => setStage(s);
-
   // /join only answers while joining is open. This step SHOWS the join QR, so
   // it has to open the window itself — otherwise a volunteer scanning the code
   // on screen during setup was told "joining is closed", which is absurd.
   // An hour covers a volunteer meeting; it closes by itself.
+  //
+  // MUST stay above the `if (!open)` return below. These two hooks sat under it
+  // and broke every fresh install: closed, this component ran 8 hooks; the
+  // moment onboarding opened it ran 10, and React tore the tree down with
+  // error #310 ("rendered more hooks than during the previous render"). It only
+  // showed on a first run, which is the one path an existing booth never takes.
   const [joinLeft, setJoinLeft] = useState<number | null>(null);
   useEffect(() => {
-    if (stage !== "team") return;
+    if (!open || stage !== "team") return;
     let alive = true;
     crewJoinOpen(60).catch(() => {});
     const tick = () =>
@@ -355,7 +356,12 @@ export function FirstRunSetup({ onNavigate }: { onNavigate?: (p: string) => void
       alive = false;
       clearInterval(t);
     };
-  }, [stage]);
+  }, [open, stage]);
+
+  if (!open) return null;
+
+  const idx = STAGES.findIndex((s) => s.id === stage);
+  const go = (s: Stage) => setStage(s);
   // Functional updates: a delayed `next` must step from wherever the user IS.
   const step = (delta: number) =>
     setStage((cur) => {
