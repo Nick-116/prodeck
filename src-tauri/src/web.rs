@@ -1214,7 +1214,7 @@ fn serve_static(path: &str, is_admin: bool) -> (u16, &'static str, Vec<u8>) {
             "<head><script>window.__PRODECK_ADMIN_PANEL__=true;</script>",
             1,
         );
-        (status, ctype, injected.into_owned().into_bytes())
+        (status, ctype, injected.into_bytes())
     } else {
         (status, ctype, bytes)
     }
@@ -2395,7 +2395,7 @@ async fn dispatch(
             if port_n > 0 {
                 let web = app.state::<WebState>().inner().clone();
                 stop(&web);
-                start(app.clone(), web, port_n);
+                start(app.clone(), web, port_n, true);
             }
             Ok(Value::Null)
         }
@@ -2453,7 +2453,7 @@ pub fn web_start_cmd(port: u16, app: AppHandle, state: crate::app::State<WebStat
     if state.running.load(Ordering::Acquire) {
         stop(state.inner());
     }
-    start(app, state.inner().clone(), port);
+    start(app, state.inner().clone(), port, true);
 }
 
 pub fn web_stop_cmd(state: crate::app::State<WebState>) {

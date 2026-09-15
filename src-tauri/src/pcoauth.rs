@@ -346,10 +346,15 @@ pub async fn oauth_begin_core(app: AppHandle) -> Result<String, String> {
             });
         }
         tokio::spawn(async move {
-            let code_result = tokio::time::timeout(FLOW_TIMEOUT, rx)
+            // timeout → Result<recv, Elapsed>
+            //   map_err → Result<recv, String>
+            //   and_then → Result<Result<String,String>, String>  (RecvError mapped)
+            //   and_then(|r| r) → Result<String, String>
+            let code_result: Result<String, String> = tokio::time::timeout(FLOW_TIMEOUT, rx)
                 .await
                 .map_err(|_| "Sign-in timed out — the browser never came back.".to_string())
-                .and_then(|r| r.map_err(|_| "Sign-in was cancelled.".to_string()));
+                .and_then(|r| r.map_err(|_| "Sign-in was cancelled.".to_string()))
+                .and_then(|r| r);
             let result = match code_result {
                 Ok(code) => finish(&cid, &code, &pkce, &redirect).await,
                 Err(e) => Err(e),
