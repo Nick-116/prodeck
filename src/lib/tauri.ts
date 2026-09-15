@@ -13,6 +13,11 @@ export { IS_DEMO, setDemo } from "./demo";
 export const IS_WEB =
   typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
 
+/** True in the Tauri desktop app, or when the server injected the admin flag
+ *  into this page (port 4000 — full admin panel). False on the crew port. */
+export const IS_ADMIN_PANEL =
+  !IS_WEB || !!(window as any).__PRODECK_ADMIN_PANEL__;
+
 // Base URL for the host's MJPEG (NDI) servers. In the desktop app the feeds are
 // on loopback; in a browser they live on the host this page was served from.
 export const mjpegBase = (): string =>

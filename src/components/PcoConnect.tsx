@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   IS_WEB,
+  IS_ADMIN_PANEL,
   on,
   getSettings,
   updateSettings,
@@ -57,7 +58,7 @@ export function PcoConnect({
   }, []);
 
   useEffect(() => {
-    if (!IS_WEB) void refresh();
+    void refresh();
   }, [refresh]);
 
   // The browser half of the flow finishes out of band: Planning Center
@@ -77,7 +78,7 @@ export function PcoConnect({
     return () => void p.then((f) => f());
   }, [refresh]);
 
-  if (IS_WEB) {
+  if (!IS_ADMIN_PANEL) {
     return (
       <p className="hint">
         Planning Center is connected at the booth computer, not from a browser —
@@ -91,7 +92,11 @@ export function PcoConnect({
     setBusy(true);
     setMsg("");
     try {
-      await pcoOauthBegin();
+      const { url } = await pcoOauthBegin();
+      if (IS_WEB) {
+        // Docker/browser mode: open PCO in a new tab; the server catches the callback.
+        window.open(url, "_blank", "noopener");
+      }
       setWaiting(true);
       setMsg("");
     } catch (e) {

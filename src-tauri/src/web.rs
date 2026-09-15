@@ -283,7 +283,7 @@ fn spawn_event_bridge(app: &AppHandle, web: &WebState) {
     });
 }
 
-pub fn start(app: AppHandle, web: WebState, port: u16) {
+pub fn start(app: AppHandle, web: WebState, port: u16, is_admin: bool) {
     if web.running.swap(true, Ordering::AcqRel) {
         return; // already running
     }
@@ -318,7 +318,7 @@ pub fn start(app: AppHandle, web: WebState, port: u16) {
                     let app2 = app.clone();
                     let web2 = web.clone();
                     tokio::spawn(async move {
-                        let _ = handle_conn(stream, app2, web2).await;
+                        let _ = handle_conn(stream, app2, web2, is_admin).await;
                     });
                 }
                 _ => continue,
@@ -339,6 +339,7 @@ async fn handle_conn(
     mut stream: tokio::net::TcpStream,
     app: AppHandle,
     web: WebState,
+    is_admin: bool,
 ) -> std::io::Result<()> {
     let mut buf = Vec::new();
     let mut tmp = [0u8; 4096];
@@ -1019,8 +1020,16 @@ async fn handle_conn(
         return stream.flush().await;
     }
 
-    // Static SPA assets (public — they carry no booth data).
-    let (status, ctype, bytes) = serve_static(path);
+    // PCO OAuth callback — admin port only. PCO redirects here after the user
+    // approves the sign-in; the path looks like /pco/callback?code=…&state=…
+    if is_admin && method == "GET" && path.starts_with("/pco/callback") {
+        let html = crate::pcoauth::handle_web_callback(path);
+        return write_bytes(&mut stream, 200, "text/html; charset=utf-8", html.as_bytes()).await;
+    }
+
+    // Static SPA assets. Admin port injects the admin-panel flag so the
+    // frontend knows to show the full admin UI instead of the crew view.
+    let (status, ctype, bytes) = serve_static(path, is_admin);
     write_bytes(&mut stream, status, ctype, &bytes).await
 }
 
@@ -1184,16 +1193,30 @@ fn content_type(path: &str) -> &'static str {
     }
 }
 
-fn serve_static(path: &str) -> (u16, &'static str, Vec<u8>) {
+fn serve_static(path: &str, is_admin: bool) -> (u16, &'static str, Vec<u8>) {
     let clean = path.split('?').next().unwrap_or("/").trim_start_matches('/');
     let lookup = if clean.is_empty() { "index.html" } else { clean };
-    if let Some(f) = DIST.get_file(lookup) {
-        return (200, content_type(lookup), f.contents().to_vec());
-    }
-    // SPA fallback: serve index.html for client-side routes.
-    match DIST.get_file("index.html") {
-        Some(f) => (200, "text/html; charset=utf-8", f.contents().to_vec()),
-        None => (404, "text/plain", b"not found".to_vec()),
+    let (status, ctype, bytes) = if let Some(f) = DIST.get_file(lookup) {
+        (200, content_type(lookup), f.contents().to_vec())
+    } else {
+        // SPA fallback: serve index.html for client-side routes.
+        match DIST.get_file("index.html") {
+            Some(f) => (200, "text/html; charset=utf-8", f.contents().to_vec()),
+            None => return (404, "text/plain", b"not found".to_vec()),
+        }
+    };
+    // Admin port: inject a flag so the frontend renders the full admin panel
+    // instead of the crew/member view.
+    if is_admin && ctype.starts_with("text/html") {
+        let html = String::from_utf8_lossy(&bytes);
+        let injected = html.replacen(
+            "<head>",
+            "<head><script>window.__PRODECK_ADMIN_PANEL__=true;</script>",
+            1,
+        );
+        (status, ctype, injected.into_owned().into_bytes())
+    } else {
+        (status, ctype, bytes)
     }
 }
 

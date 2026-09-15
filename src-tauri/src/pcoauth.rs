@@ -42,11 +42,31 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU16, Ordering as AOrdering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use crate::app::AppHandle;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
+
+/// Admin port set by lib.rs at startup. When non-zero, OAuth uses the main
+/// server as the redirect target instead of a temporary loopback listener.
+static ADMIN_PORT: AtomicU16 = AtomicU16::new(0);
+
+pub fn set_admin_port(port: u16) {
+    ADMIN_PORT.store(port, AOrdering::Release);
+}
+
+struct PendingWebCallback {
+    expected_state: String,
+    cid: String,
+    pkce: String,
+    redirect: String,
+    tx: oneshot::Sender<Result<String, String>>,
+}
+
+static PENDING_WEB: Mutex<Option<PendingWebCallback>> = Mutex::new(None);
 
 const AUTHORIZE: &str = "https://api.planningcenteronline.com/oauth/authorize";
 const TOKEN: &str = "https://api.planningcenteronline.com/oauth/token";
@@ -245,7 +265,14 @@ fn explain(code: u16, body: &str) -> String {
 /// field. Shown in the UI and in the error above, so they're generated from
 /// `PORTS` rather than written out twice.
 pub(crate) fn redirect_uris() -> Vec<String> {
-    PORTS.iter().map(|p| format!("http://127.0.0.1:{p}/pco/callback")).collect()
+    let mut uris: Vec<String> = PORTS.iter()
+        .map(|p| format!("http://127.0.0.1:{p}/pco/callback"))
+        .collect();
+    let admin = ADMIN_PORT.load(AOrdering::Acquire);
+    if admin > 0 {
+        uris.push(format!("http://127.0.0.1:{admin}/pco/callback"));
+    }
+    uris
 }
 
 #[derive(Serialize)]
@@ -263,8 +290,9 @@ pub async fn pco_oauth_begin(
     Ok(BeginResult { url })
 }
 
-/// Start the OAuth flow: bind the loopback listener, build the authorize URL,
-/// spawn the callback waiter, and return the URL for the caller to open.
+/// Start the OAuth flow. When ADMIN_PORT is set (Docker/browser mode), the
+/// main web server receives the callback at /pco/callback. Otherwise a
+/// temporary loopback listener catches it (desktop mode).
 pub async fn oauth_begin_core(app: AppHandle) -> Result<String, String> {
     let settings = app.state::<SettingsState>();
     let cid = client_id(settings.inner()).ok_or_else(|| {
@@ -279,14 +307,18 @@ pub async fn oauth_begin_core(app: AppHandle) -> Result<String, String> {
         )
     })?;
 
-    // Bind before sending anyone to the browser: discovering the port is busy
-    // after Planning Center has already redirected means a dead-end page.
-    let (listener, port) = bind().await?;
-    let redirect = format!("http://127.0.0.1:{port}/pco/callback");
     let pkce = verifier();
-    // A second random value, unrelated to the PKCE one: `state` only has to
-    // match on the way back, so that a callback ProDeck didn't start is refused.
     let state = verifier();
+
+    let admin_port = ADMIN_PORT.load(AOrdering::Acquire);
+    let use_web_callback = admin_port > 0;
+
+    let redirect = if use_web_callback {
+        format!("http://127.0.0.1:{admin_port}/pco/callback")
+    } else {
+        let (_, port) = bind().await?;
+        format!("http://127.0.0.1:{port}/pco/callback")
+    };
 
     let url = format!(
         "{AUTHORIZE}?client_id={}&redirect_uri={}&response_type=code&scope={}\
@@ -299,22 +331,105 @@ pub async fn oauth_begin_core(app: AppHandle) -> Result<String, String> {
     );
 
     let app2 = app.clone();
-    tokio::spawn(async move {
-        let result = match wait_for_callback(listener, &state).await {
-            Ok(code) => finish(&cid, &code, &pkce, &redirect).await,
-            Err(e) => Err(e),
-        };
-        match result {
-            Ok(who) => {
-                let _ = app2.emit("pco:oauth", serde_json::json!({ "ok": true, "who": who }));
-            }
-            Err(e) => {
-                let _ = app2.emit("pco:oauth", serde_json::json!({ "ok": false, "error": e }));
-            }
+    if use_web_callback {
+        // Docker mode: register a pending callback that handle_web_callback()
+        // will complete when the browser is redirected back.
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut pending = PENDING_WEB.lock().unwrap_or_else(|p| p.into_inner());
+            *pending = Some(PendingWebCallback {
+                expected_state: state.clone(),
+                cid: cid.clone(),
+                pkce: pkce.clone(),
+                redirect: redirect.clone(),
+                tx,
+            });
         }
-    });
+        tokio::spawn(async move {
+            let code_result = tokio::time::timeout(FLOW_TIMEOUT, rx)
+                .await
+                .map_err(|_| "Sign-in timed out — the browser never came back.".to_string())
+                .and_then(|r| r.map_err(|_| "Sign-in was cancelled.".to_string()));
+            let result = match code_result {
+                Ok(code) => finish(&cid, &code, &pkce, &redirect).await,
+                Err(e) => Err(e),
+            };
+            let payload = match result {
+                Ok(who) => serde_json::json!({ "ok": true, "who": who }),
+                Err(e) => serde_json::json!({ "ok": false, "error": e }),
+            };
+            let _ = app2.emit("pco:oauth", payload);
+        });
+    } else {
+        // Desktop / loopback mode: re-bind to get the listener we already
+        // probed above (bind() was called to get the port).
+        let (listener, _) = bind().await?;
+        tokio::spawn(async move {
+            let result = match wait_for_callback(listener, &state).await {
+                Ok(code) => finish(&cid, &code, &pkce, &redirect).await,
+                Err(e) => Err(e),
+            };
+            let payload = match result {
+                Ok(who) => serde_json::json!({ "ok": true, "who": who }),
+                Err(e) => serde_json::json!({ "ok": false, "error": e }),
+            };
+            let _ = app2.emit("pco:oauth", payload);
+        });
+    }
 
     Ok(url)
+}
+
+/// Called by the main web server when it receives GET /pco/callback.
+/// Parses the query, signals the waiting oauth_begin_core task, and returns
+/// an HTML page for the browser tab to display.
+pub fn handle_web_callback(path: &str) -> String {
+    let q = parse_query(path);
+
+    if let Some(err) = q.get("error") {
+        let msg = if err == "access_denied" {
+            "Sign-in was cancelled. Nothing changed."
+        } else {
+            "Planning Center refused the sign-in."
+        };
+        let mut pending = PENDING_WEB.lock().unwrap_or_else(|p| p.into_inner());
+        *pending = None;
+        return page_html(false, msg);
+    }
+
+    let state = q.get("state").map(String::as_str).unwrap_or("");
+    let code = q.get("code").map(String::as_str).unwrap_or("");
+
+    let mut pending = PENDING_WEB.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(p) = pending.take() else {
+        return page_html(false, "No sign-in was in progress. Start the connection again from ProDeck.");
+    };
+
+    if p.expected_state != state {
+        return page_html(false, "This sign-in didn't match the one ProDeck started. Try connecting again.");
+    }
+
+    if code.is_empty() {
+        return page_html(false, "Planning Center sent no authorization code.");
+    }
+
+    let _ = p.tx.send(Ok(code.to_string()));
+    page_html(true, "ProDeck is connected to Planning Center. You can close this tab.")
+}
+
+/// HTML body for the OAuth result page (no HTTP headers — the main server adds those).
+fn page_html(ok: bool, msg: &str) -> String {
+    let accent = if ok { "#1f9d55" } else { "#b4332a" };
+    let title = if ok { "Connected" } else { "Not connected" };
+    format!(
+        "<!doctype html><meta charset=utf-8><title>ProDeck — {title}</title>\
+         <style>:root{{color-scheme:light dark}}body{{margin:0;min-height:100vh;display:grid;\
+         place-items:center;font:16px/1.5 -apple-system,Segoe UI,system-ui,sans-serif;\
+         background:Canvas;color:CanvasText}}div{{max-width:28rem;padding:2rem;text-align:center}}\
+         h1{{margin:0 0 .5rem;font-size:1.25rem;color:{accent}}}p{{margin:0;opacity:.75}}</style>\
+         <div><h1>{title}</h1><p>{}</p></div>",
+        html_escape(msg)
+    )
 }
 
 async fn bind() -> Result<(TcpListener, u16), String> {

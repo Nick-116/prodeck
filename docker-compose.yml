@@ -21,10 +21,11 @@ services:
 
     restart: unless-stopped
 
-    # Expose the web gateway. Change the host binding to 0.0.0.0 to listen on
-    # all interfaces, or to a specific LAN IP (e.g. 192.168.1.50:4000:4000).
+    # 4000 = admin panel (full UI), 4001 = crew/IS_WEB view for end users.
+    # Change 127.0.0.1 to 0.0.0.0 or a LAN IP to expose on the network.
     ports:
       - "127.0.0.1:4000:4000"
+      - "127.0.0.1:4001:4001"
 
     # Persist settings, identity, check-in data, PCO cache, etc.
     volumes:
@@ -32,6 +33,8 @@ services:
 
     environment:
       PRODECK_ADMIN_PASSWORD: password
+      PRODECK_PORT: 4000
+      PRODECK_CREW_PORT: 4001
     #   PRODECK_PORT: 4000
     #   RUST_LOG: info
     #   PRODECK_NDI_LIB: /usr/local/lib/libndi.so

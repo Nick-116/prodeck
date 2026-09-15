@@ -104,15 +104,19 @@ async fn async_run() {
 
     let loaded_settings = settings::load();
 
-    // Docker: always start the web gateway. Use web_port from settings (default
-    // 4000 if unset), overridable via PRODECK_PORT env var.
-    let port: u16 = std::env::var("PRODECK_PORT")
+    // Admin port (full UI, injects __PRODECK_ADMIN_PANEL__).
+    let admin_port: u16 = std::env::var("PRODECK_PORT")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or_else(|| {
             let p = loaded_settings.web_port;
             if p > 0 { p } else { 4000 }
         });
+    // Crew port (IS_WEB view for end users).
+    let crew_port: u16 = std::env::var("PRODECK_CREW_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4001);
 
     let (events_tx, _) = broadcast::channel::<(String, String)>(4096);
 
@@ -158,9 +162,16 @@ async fn async_run() {
     // Start PCO OAuth background refresh.
     pcoauth::init(app.clone());
 
-    // Start the web gateway (always-on in Docker mode).
+    // Register the admin port so PCO OAuth can use /pco/callback on this server.
+    pcoauth::set_admin_port(admin_port);
+
+    // Admin listener: full UI, injects __PRODECK_ADMIN_PANEL__.
     let web_state = app.state::<web::WebState>().inner().clone();
-    web::start(app.clone(), web_state, port);
+    web::start(app.clone(), web_state, admin_port, true);
+
+    // Crew listener: IS_WEB view for end users.
+    let crew_web_state = std::sync::Arc::new(web::WebInner::new());
+    web::start(app.clone(), crew_web_state, crew_port, false);
 
     // Background workers.
     tap::spawn_heartbeat(app.clone());
@@ -173,7 +184,8 @@ async fn async_run() {
     propresenter::spawn_lobby_auto(app.clone());
     propresenter::spawn_announcement_poll(app.clone());
 
-    eprintln!("ProDeck listening on 0.0.0.0:{port}");
+    eprintln!("ProDeck admin panel on 0.0.0.0:{admin_port}");
+    eprintln!("ProDeck crew view   on 0.0.0.0:{crew_port}");
 
     // Block until SIGINT/SIGTERM.
     tokio::signal::ctrl_c().await.ok();
