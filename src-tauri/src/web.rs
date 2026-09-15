@@ -1323,6 +1323,11 @@ pub(crate) fn member_cmd_ok(cmd: &str) -> bool {
             | "ndi_discover_sources"
             | "ndi_start_receiver"
             | "ndi_stop_receiver"
+            // Slide pictures. A crew-token kiosk could read the active
+            // presentation but not fetch its images, so the Slide Preview tile
+            // sat blank — found on the office kiosk on a Sunday morning.
+            | "pp_thumbnail"
+            | "pp_playlist_thumbnail"
     )
 }
 
@@ -2185,6 +2190,8 @@ mod member_pp_tests {
             "obs_state", "avantis_state",
             // Cameras.
             "ndi_discover_sources", "ndi_start_receiver", "ndi_stop_receiver",
+            // Slide pictures for the Slide Preview / Slide Grid tiles.
+            "pp_thumbnail", "pp_playlist_thumbnail",
         ] {
             assert!(member_cmd_ok(cmd), "a member screen needs {cmd}");
         }
