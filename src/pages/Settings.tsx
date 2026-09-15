@@ -377,7 +377,7 @@ export function SettingsPage() {
                     : upd.status === "downloading"
                       ? `Downloading… ${upd.progress}%`
                       : upd.status === "ready"
-                        ? "Installed — restarting"
+                        ? IS_WEB ? "Rebuild required — see instructions below" : "Installed — restarting"
                         : upd.status === "uptodate"
                           ? "Up to date"
                           : upd.status === "error"
@@ -390,7 +390,7 @@ export function SettingsPage() {
             <span>&nbsp;</span>
             {upd.status === "available" ? (
               <button className="btn primary" onClick={() => upd.install()}>
-                Install &amp; Restart
+                {IS_WEB ? "See update instructions" : "Install & Restart"}
               </button>
             ) : (
               <button
@@ -403,10 +403,15 @@ export function SettingsPage() {
             )}
           </div>
         </div>
+        {IS_WEB && upd.status === "ready" && (
+          <div className="hint" style={{ fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
+            {"Run on your Docker host to update:\n\n  git pull\n  docker compose build\n  docker compose up -d"}
+          </div>
+        )}
         <p className="hint">
-          ProDeck checks for updates a few seconds after launch and shows a banner when one
-          is ready. Updates are signed releases from the ProDeck GitHub repository (or your
-          own fork's feed, if you build it yourself); installing restarts the app.
+          {IS_WEB
+            ? `ProDeck checks GitHub (Nick-116/prodeck) for new releases a few seconds after launch. When an update is available, rebuild your Docker image to apply it.`
+            : `ProDeck checks for updates a few seconds after launch and shows a banner when one is ready. Updates are signed releases from the ProDeck GitHub repository; installing restarts the app.`}
         </p>
       </section>
 

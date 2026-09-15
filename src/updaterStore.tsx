@@ -6,10 +6,11 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { check, type Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
-import { getVersion } from "@tauri-apps/api/app";
-import { IS_WEB } from "./lib/tauri";
+import { IS_WEB, invoke } from "./lib/tauri";
+
+// Tauri desktop imports — only used when IS_WEB is false.
+// Dynamic imports prevent bundling errors in the web/Docker build.
+type TauriUpdate = { version: string; body?: string; downloadAndInstall: (cb: (ev: unknown) => void) => Promise<void> };
 
 export type UpdateStatus =
   | "idle"
@@ -33,8 +34,21 @@ interface UpdaterCtx {
 }
 
 const DISMISS_KEY = "prodeck.updateDismissed";
+const GITHUB_REPO = "Nick-116/prodeck";
+const GITHUB_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 
 const Ctx = createContext<UpdaterCtx | null>(null);
+
+// Compare semver strings: returns true if `latest` is newer than `current`.
+function isNewer(current: string, latest: string): boolean {
+  const parse = (v: string) =>
+    v.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+  const [ca, cb, cc] = parse(current);
+  const [la, lb, lc] = parse(latest);
+  if (la !== ca) return la > ca;
+  if (lb !== cb) return lb > cb;
+  return lc > cc;
+}
 
 export function UpdaterProvider({ children }: { children: ReactNode }) {
   const [version, setVersion] = useState("");
@@ -43,25 +57,50 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
   const [notes, setNotes] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const updateRef = useRef<Update | null>(null);
+  // Only used in desktop (Tauri) mode.
+  const tauriUpdateRef = useRef<TauriUpdate | null>(null);
 
-  async function doCheck(silent = false) {
+  // ── Web / Docker mode: check GitHub releases API ──────────────────────────
+  async function doCheckWeb(silent = false) {
     setStatus("checking");
     setError(null);
     try {
+      const current = await invoke<string>("get_app_version").catch(() => "");
+      const res = await fetch(GITHUB_API, {
+        headers: { Accept: "application/vnd.github+json" },
+      });
+      if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+      const data = await res.json();
+      const latest: string = (data.tag_name ?? "").replace(/^v/, "");
+      const body: string = data.body ?? "";
+      if (current && isNewer(current, latest)) {
+        let dismissed = "";
+        try { dismissed = localStorage.getItem(DISMISS_KEY) ?? ""; } catch { /* */ }
+        setNewVersion(latest);
+        setNotes(body || null);
+        setStatus(!silent || dismissed !== latest ? "available" : "idle");
+      } else {
+        setStatus("uptodate");
+      }
+    } catch (e) {
+      setError(String(e));
+      setStatus("error");
+    }
+  }
+
+  // ── Desktop (Tauri) mode: use plugin-updater ──────────────────────────────
+  async function doCheckDesktop(silent = false) {
+    setStatus("checking");
+    setError(null);
+    try {
+      const { check } = await import("@tauri-apps/plugin-updater");
       const u = await check();
       if (u) {
-        updateRef.current = u;
+        tauriUpdateRef.current = u as unknown as TauriUpdate;
         setNewVersion(u.version);
         setNotes(u.body ?? null);
         let dismissed = "";
-        try {
-          dismissed = localStorage.getItem(DISMISS_KEY) ?? "";
-        } catch {
-          /* storage unavailable */
-        }
-        // An explicit "Check for updates" always shows the result; only the
-        // automatic launch check honours a dismissal.
+        try { dismissed = localStorage.getItem(DISMISS_KEY) ?? ""; } catch { /* */ }
         setStatus(!silent || dismissed !== u.version ? "available" : "idle");
       } else {
         setStatus("uptodate");
@@ -72,22 +111,35 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  async function doCheck(silent = false) {
+    return IS_WEB ? doCheckWeb(silent) : doCheckDesktop(silent);
+  }
+
+  // ── Install ───────────────────────────────────────────────────────────────
   async function install() {
-    const u = updateRef.current;
+    if (IS_WEB) {
+      // Docker: user needs to rebuild the image. Show "ready" to trigger the
+      // instructions banner — actual rebuild happens on the host, not here.
+      setStatus("ready");
+      return;
+    }
+    const u = tauriUpdateRef.current;
     if (!u) return;
     setStatus("downloading");
     setProgress(0);
     try {
       let total = 0;
       let got = 0;
-      await u.downloadAndInstall((ev) => {
-        if (ev.event === "Started") total = ev.data.contentLength ?? 0;
-        else if (ev.event === "Progress") {
-          got += ev.data.chunkLength;
+      await u.downloadAndInstall((ev: unknown) => {
+        const e = ev as { event: string; data?: { contentLength?: number; chunkLength?: number } };
+        if (e.event === "Started") total = e.data?.contentLength ?? 0;
+        else if (e.event === "Progress") {
+          got += e.data?.chunkLength ?? 0;
           if (total) setProgress(Math.min(99, Math.round((got / total) * 100)));
-        } else if (ev.event === "Finished") setProgress(100);
+        } else if (e.event === "Finished") setProgress(100);
       });
       setStatus("ready");
+      const { relaunch } = await import("@tauri-apps/plugin-process");
       await relaunch();
     } catch (e) {
       setError(String(e));
@@ -95,30 +147,29 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  // Remember WHICH version was dismissed. Setting status back to "idle" only
-  // hid it until the next launch, when the 4s auto-check found the same
-  // version and put the banner straight back — the "it won't go away" half of
-  // the bug report. A newer version still gets to interrupt.
   function dismiss() {
     try {
       if (newVersion) localStorage.setItem(DISMISS_KEY, newVersion);
-    } catch {
-      /* storage unavailable — falls back to hiding for this session */
-    }
+    } catch { /* storage unavailable */ }
     setStatus("idle");
   }
 
   useEffect(() => {
     if (IS_WEB) {
-      setVersion("web");
-      return; // the desktop host owns updates
+      // Get running version from the server, then schedule an update check.
+      invoke<string>("get_app_version")
+        .then((v) => setVersion(v))
+        .catch(() => setVersion("unknown"));
+      const t = setTimeout(() => doCheckWeb(true), 4000);
+      return () => clearTimeout(t);
+    } else {
+      // Desktop: use Tauri's getVersion.
+      import("@tauri-apps/api/app").then(({ getVersion }) =>
+        getVersion().then(setVersion).catch(() => {})
+      );
+      const t = setTimeout(() => doCheckDesktop(true), 4000);
+      return () => clearTimeout(t);
     }
-    getVersion().then(setVersion).catch(() => {});
-    // Auto-check a few seconds after launch (silent if the server is unreachable).
-    const t = setTimeout(() => {
-      doCheck(true);
-    }, 4000);
-    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

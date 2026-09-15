@@ -2290,6 +2290,10 @@ async fn dispatch(
         "tap_test" => {
             crate::tap::test_core(app).await
         }
+        // ---- App version (used by browser update checker)
+        "get_app_version" => {
+            Ok(Value::String(env!("CARGO_PKG_VERSION").to_string()))
+        }
         // ---- Diagnostics
         "diag_bundle" => {
             let client = args.get("client").cloned().unwrap_or(Value::Null);

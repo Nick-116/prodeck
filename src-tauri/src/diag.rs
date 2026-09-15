@@ -197,6 +197,6 @@ pub fn diag_recent_log(n: Option<usize>) -> Vec<String> {
 /// Return the Adopter's Guide URL for a section. URL opening is not available in Docker mode.
 pub fn help_open(section: Option<String>) -> Result<String, String> {
     let anchor = section.map(|s| format!("#{}", s.trim_start_matches('#'))).unwrap_or_default();
-    let url = format!("https://whiteoakmedia.github.io/prodeck/ADOPTERS_GUIDE.html{anchor}");
+    let url = format!("https://nick-116.github.io/prodeck/ADOPTERS_GUIDE.html{anchor}");
     Ok(url)
 }
