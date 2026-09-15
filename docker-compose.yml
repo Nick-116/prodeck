@@ -30,20 +30,11 @@ services:
     volumes:
       - prodeck_data:/home/prodeck/.config/ProDeck
 
-    environment:
-      # Override the listening port (must also update ports: above).
-      # PRODECK_PORT: 4000
-
-      # Bootstrap admin password — used ONLY when no password has been saved in
-      # Settings yet. Set this to unlock the settings page on first startup;
-      # then set a real password in Settings → Browser Access and remove this.
-      # PRODECK_ADMIN_PASSWORD: changeme
-
-      # Optional: force a specific log level (error | warn | info | debug).
-      # RUST_LOG: info
-
-      # Optional: NDI SDK path if you use Stage Feed tiles.
-      # PRODECK_NDI_LIB: /usr/local/lib/libndi.so
+    # environment:
+    #   PRODECK_PORT: 4000
+    #   PRODECK_ADMIN_PASSWORD: changeme
+    #   RUST_LOG: info
+    #   PRODECK_NDI_LIB: /usr/local/lib/libndi.so
 
     # ProDeck needs to reach the LAN (ProPresenter, Avantis, OBS). Use host
     # networking if you want mDNS/Bonjour discovery to work transparently; for
