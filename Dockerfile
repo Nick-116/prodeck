@@ -75,6 +75,7 @@ EXPOSE 4000
 # Store ProDeck data at /data (mount a named volume or host path here).
 VOLUME ["/home/prodeck/.config/ProDeck"]
 
-ENV HOME=/home/prodeck
+ENV HOME=/home/prodeck \
+    PRODECK_PORT=4000
 
 ENTRYPOINT ["/usr/local/bin/prodeck"]
