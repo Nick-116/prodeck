@@ -1,0 +1,25 @@
+# Who owns what.
+#
+# GitHub's permissions are repo-wide — there is no per-folder write access — so
+# this file does the next best thing: it makes the named owner an automatic,
+# required reviewer for their paths. Nobody else changes these without them
+# seeing it first.
+#
+# Ownership only takes effect for people with write access to this repository.
+
+# Everything, unless a later line claims it.
+*                                   @whiteoakmedia
+
+# The Windows track. Validated on real Windows booth hardware, which the
+# maintainer's own booth is not — @jpeters0 has the machine and owns these.
+/WINDOWS.md                         @jpeters0
+/scripts/build-windows.ps1          @jpeters0
+/src-tauri/tauri.windows.conf.json  @jpeters0
+/.github/workflows/windows.yml      @jpeters0
+
+# Note: the Windows implementations inside shared files — the start-at-login
+# and sleep-guard code in src-tauri/src/keepalive.rs, the NDI runtime lookup in
+# ndi.rs, the OS facts and file-URL handling in diag.rs — cannot be owned by
+# path, because they sit behind #[cfg(windows)] inside files that also carry
+# the macOS paths. Changes there that touch a #[cfg(windows)] block should get
+# @jpeters0 on the review regardless.

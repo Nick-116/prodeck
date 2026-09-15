@@ -141,6 +141,14 @@ service on it.
 
 Zach Green — zach@whiteoakmedia.io
 
+## Maintainers
+
+- **ProDeck** — [@whiteoakmedia](https://github.com/whiteoakmedia) (Zach Green)
+- **Windows** — [@jpeters0](https://github.com/jpeters0) (Peterson), who brought
+  the Windows build tooling, CI and [WINDOWS.md](WINDOWS.md) checklist, and who
+  has the Windows booth hardware to validate them on. See
+  [.github/CODEOWNERS](.github/CODEOWNERS).
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE). Use it, change it, run it at your church. No
