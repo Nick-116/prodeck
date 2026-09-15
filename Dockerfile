@@ -16,9 +16,7 @@ RUN npm ci --no-fund --no-audit
 
 COPY src ./src
 COPY public ./public
-COPY index.html vite.config.* tsconfig* ./
-# Any other top-level config files the Vite build needs.
-COPY *.json *.ts *.js 2>/dev/null ./  || true
+COPY index.html vite.config.ts tsconfig.json tsconfig.node.json ./
 
 RUN npm run build
 
