@@ -35,6 +35,46 @@ numbers below are the ones shown in **Settings → Software Update**.
 
 ---
 
+## 0.9.84 — 15 September 2026
+
+### Windows build — thank you, Peterson
+
+The Windows side of ProDeck now has someone with Windows booth hardware behind
+it. **[Peterson (@jpeters0)](https://github.com/jpeters0)** contributed the
+whole Windows build track: the PowerShell build script, a Windows CI workflow,
+the installer configuration, and [WINDOWS.md](WINDOWS.md) — a genuinely careful
+checklist for bringing up a Windows booth, ending with the advice not to use
+console control in a live service until the read-only mirror has run a clean
+rehearsal.
+
+He also went through the app removing the assumption that a booth computer is a
+Mac: the onboarding, Settings and the problem reporter no longer say "Mac", and
+first-run no longer promises crash-relaunch on Windows, which a Run key can't
+deliver.
+
+**This still does not mean ProDeck is supported on Windows** — the Windows
+paths need validating on real hardware first, which is exactly what his
+checklist is for. macOS remains the supported build.
+
+### Fixed — the plan switching itself mid-service
+
+Also found by Peterson, and this one bites on a Sunday. ProDeck asked Planning
+Center only for *future* plans, and Planning Center drops today's plan the
+moment its service time passes. Part-way through the morning the plan you had
+selected was no longer in the list, so ProDeck replaced it with next week's.
+It now asks for recent plans as well, so the current weekend stays selectable
+all day.
+
+### Fixed — slide preview blank on a kiosk
+
+The Slide Preview and Slide Grid tiles on a screen signed in with the crew
+password could read the slide but not fetch its picture, so they sat empty.
+
+> 0.9.83's notes claimed this fix and the release did not contain it — a
+> mistake in how it was published, not in the code. This is the real one.
+
+---
+
 ## 0.9.83 — 13 September 2026
 
 ### Fixed — slide preview blank on a kiosk
