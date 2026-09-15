@@ -39,6 +39,17 @@ if [ -n "$EXPECT_PUB" ] && [ "$EXPECT_PUB" != "$CONF_PUB" ]; then
   echo "✗ tauri.conf.json pubkey does not match $KEY_PATH.pub — installed apps would reject this update."
   exit 1
 fi
+# Cargo.lock records the crate's own version, and bumping tauri.conf.json does
+# not touch it — so a release commit can carry Cargo.toml at the new version and
+# Cargo.lock at the old one. Nothing on macOS notices; the Windows CI runs
+# `cargo test --locked` and fails outright. Refuse to publish out of sync.
+LOCK_V="$(awk '/^name = "prodeck"$/{getline; gsub(/[^0-9.]/,"",$0); print; exit}' src-tauri/Cargo.lock)"
+if [ "$LOCK_V" != "$VERSION" ]; then
+  echo "✗ src-tauri/Cargo.lock says $LOCK_V but this release is $VERSION."
+  echo "  Run:  (cd src-tauri && cargo check --quiet)  then commit Cargo.lock."
+  exit 1
+fi
+
 echo "▸ Releasing ProDeck $TAG to github.com/$REPO"
 
 echo "▸ Building universal app"
