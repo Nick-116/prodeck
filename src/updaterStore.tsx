@@ -69,6 +69,7 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
       const res = await fetch(GITHUB_API, {
         headers: { Accept: "application/vnd.github+json" },
       });
+      if (res.status === 404) { setStatus("uptodate"); return; } // no releases yet
       if (!res.ok) throw new Error(`GitHub API ${res.status}`);
       const data = await res.json();
       const latest: string = (data.tag_name ?? "").replace(/^v/, "");
