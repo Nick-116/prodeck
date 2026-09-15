@@ -1,0 +1,105 @@
+{
+  "$comment": "Read by whiteoakmedia.io/tools at render time (cached ~10 min). Edit this when features, requirements or install steps change; the site needs no deploy. Any key may be omitted to keep the site's default. Download buttons come from the latest GitHub Release's assets, not from here; `installers` is only the fallback when GitHub's API is unavailable, and must use stable (unversioned) filenames.",
+  "tagline": "The production booth, in one app.",
+  "description": "ProDeck runs on a Mac in your booth and ties the room together: ProPresenter, Planning Center, your consoles, crew phones, kiosk screens, lobby NFC discs and your livestream, all feeding drag-and-drop dashboards the whole team can see from anywhere. Every feature is independent: run the core with nothing but a Mac, ProPresenter and Planning Center, and add the rest when you want it.",
+  "origin": "Built for Cornerstone Church, Cheshire CT, and run there every Sunday.",
+  "platform": "macOS 10.15 or later, Intel or Apple Silicon · phones, browsers and kiosks connect to it · Windows preview",
+  "stack": "Tauri 2 (Rust) + React/TypeScript, plus two small Cloudflare Workers for the optional cloud features",
+  "requirements": [
+    "A Mac for the booth app, Intel or Apple Silicon, macOS 10.15 or newer. It is the server for everything; clients can be anything with a browser.",
+    "ProPresenter 7 with the network API enabled (Preferences → Network).",
+    "Planning Center Services, with a free Personal Access Token from any admin account."
+  ],
+  "optional": [
+    "Cloudflare (free tier) + a domain for crew phones, tap discs, kiosks off the LAN and booth-off fallback",
+    "Any audio input (Dante Virtual Soundcard works) for SPL and RTA metering",
+    "An Allen & Heath Avantis, dLive or SQ, or a Behringer X32 / Midas M32, for the console mirror",
+    "OBS Studio (WebSocket server on) for stream status on dashboards",
+    "NDI sources, a Stream Deck with Bitfocus Companion, NTAG213+ NFC tags, GA4 on your watch page"
+  ],
+  "featureGroups": [
+    {
+      "title": "Booth",
+      "needs": "Mac + ProPresenter + Planning Center",
+      "items": [
+        "Drag-and-drop dashboards: rundown with computed clock times, now/next, slide grid, SPL + RTA, timers, readiness lights, stage feed, served to the booth screen, browsers, phones and kiosks from a built-in web gateway",
+        "ProPresenter: live status, slide thumbnails, transport, layer clears, playlist control, slide-note-driven automation",
+        "Planning Center: plans, rundown, teams, per-song key, leader and mic chips, PCO Live control, mic-assignment maps that push channel names to the desk",
+        "Service tracking and frozen per-service reports: planned vs. actual timing per item, rehearsals kept out of Sunday stats",
+        "Demo mode fills every dashboard with a sample Sunday so you can see it work before connecting anything",
+        "Runs unattended: a watchdog relaunches ProDeck after a crash and starts it at login, plus a sleep guard for the booth Mac",
+        "Backup and restore: one file holds settings, dashboards, crew, checklists and reports",
+        "Consoles: Allen & Heath Avantis, dLive and SQ over MIDI-TCP, Behringer X32 / Midas M32 over OSC, with live mirror, a desk watchdog and admin-only control from any dashboard (only the Avantis has been tried on real hardware)",
+        "OBS Studio: current scene, streaming and recording state with elapsed time, dropped frames",
+        "Installed copies check for updates at launch and install them in one click"
+      ]
+    },
+    {
+      "title": "Crew & cloud",
+      "needs": "adds Cloudflare + a domain",
+      "items": [
+        "Installable crew phone app: dashboards, the plan, chord charts, team chat and pages that buzz, scoped to who's actually serving",
+        "Paging with acknowledgement: page a person or team and their phone buzzes until they confirm; scheduled call-time pages per PCO team",
+        "Check-in by network or geofence, with an arrival board against call times; poster-QR signup with booth approval",
+        "Checklists with per-item owners and Sunday auto-reset; position guides and files only this week's scheduled person sees",
+        "Booth-off resilience: your domain still serves a read-only plan and working chat from Cloudflare's edge when the Mac is off",
+        "Kiosk mode: chrome-less, read-only dashboards for office screens and a touchscreen switcher position"
+      ]
+    },
+    {
+      "title": "Lobby & stream",
+      "items": [
+        "TapLink NFC discs: every disc in the lobby opens one link whose destination follows the service. A slide with tap: give in its notes retargets them the moment it goes live",
+        "Lobby TV auto-announcements driven from a ProPresenter playlist",
+        "Live 'watching now' count from the GA4 tag on your stream's watch page",
+        "Stream Deck keys with live tap state, dB and check-in readouts via Bitfocus Companion"
+      ]
+    }
+  ],
+  "caveat": "This is one church's production tool, shared as-is: no support contract, no warranty, and a single maintainer whose priority is his own Sunday. It fails soft by design, since nothing here can take down ProPresenter, your consoles or your stream, but read the Adopter's Guide's limitations section before betting a service on it.",
+  "installers": {
+    "mac": "ProDeck.dmg"
+  },
+  "installSteps": {
+    "mac": [
+      "Download ProDeck.dmg, open it, and drag ProDeck to Applications.",
+      "First open only: macOS will say it can't verify the app. Close that dialog, open System Settings › Privacy & Security, scroll down and click Open Anyway. (On macOS 15 Sequoia and later, right-click › Open no longer works.) It asks once because the app is free and not Apple-notarized.",
+      "The first-run walkthrough connects ProPresenter, Planning Center and browser access. Everything else has its own card in Settings. Updates install themselves from then on."
+    ],
+    "windows": [
+      "Download the Windows installer (.exe) and run it. It installs for the current user, so no administrator account is needed.",
+      "Windows SmartScreen will warn that the publisher is unknown, because the installer isn't code-signed. Click More info, then Run anyway.",
+      "Windows 11 already has the Microsoft Edge WebView2 Runtime it needs; on Windows 10 the installer will offer to add it.",
+      "Start ProDeck and try Demo Mode first, then connect Planning Center and ProPresenter. The validation checklist is in WINDOWS.md in the repo."
+    ]
+  },
+  "platformNotes": {
+    "windows": "Preview. This build comes straight off the Windows CI and hasn't been validated on booth hardware yet. macOS remains the supported release; if you run Windows in a booth, the maintainers would love your notes."
+  },
+  "buildFromSource": [
+    {
+      "label": "Get the code",
+      "command": "git clone https://github.com/whiteoakmedia/prodeck.git && cd prodeck"
+    },
+    {
+      "label": "Check prerequisites (Xcode tools, Rust, Node), configure, run in dev mode",
+      "command": "bash scripts/setup.sh"
+    },
+    {
+      "label": "Or make it a permanent, self-relaunching booth install",
+      "command": "bash scripts/setup.sh --install"
+    },
+    {
+      "label": "Or just produce a fresh ProDeck.dmg",
+      "command": "bash scripts/build-dmg.sh"
+    }
+  ],
+  "extraFiles": [
+    {
+      "label": "Adopter's Guide",
+      "description": "The evaluate-then-adopt handbook: every feature with its requirements, what's site-specific, realistic effort estimates, and the phased path from a spare-Mac trial to tap discs and kiosks.",
+      "path": "docs/ADOPTERS_GUIDE.html"
+    }
+  ],
+  "license": "MIT"
+}
