@@ -97,10 +97,28 @@ async fn subnet_scan(local_ip: Ipv4Addr) -> Vec<DiscoveredService> {
     results
 }
 
+/// True when running inside a Docker container. Docker always creates this file.
+fn in_docker() -> bool {
+    std::path::Path::new("/.dockerenv").exists()
+}
+
 /// Browse the local network for ProPresenter, Stage Display and NDI services.
-/// Runs mDNS discovery and, if that returns nothing, falls back to a TCP
-/// subnet scan — which works in Docker where multicast is unavailable.
+/// On bare metal / Tauri: mDNS (Bonjour) finds services within seconds.
+/// In Docker on Mac: multicast never crosses the VM bridge, so we skip
+/// mDNS entirely and go straight to a TCP subnet scan. On a Linux Docker
+/// host with network_mode: host in docker-compose.yml, mDNS does work and
+/// is tried first.
 pub async fn discover_services(secs: Option<u64>) -> Result<Vec<DiscoveredService>, String> {
+    // In Docker on Mac, mDNS multicast can't reach the LAN — skip it and
+    // go straight to the subnet scan so the user doesn't wait 4 seconds
+    // for a guaranteed timeout.
+    if in_docker() {
+        if let Some(local_ip) = local_ipv4() {
+            return Ok(subnet_scan(local_ip).await);
+        }
+        return Ok(vec![]);
+    }
+
     let window = Duration::from_secs(secs.unwrap_or(4));
     let service_types = [
         "_pro7prolink._tcp.local.",
@@ -108,82 +126,65 @@ pub async fn discover_services(secs: Option<u64>) -> Result<Vec<DiscoveredServic
         "_ndi._tcp.local.",
     ];
 
-    let mdns_result: Vec<DiscoveredService> = 'mdns: {
-        let daemon = match ServiceDaemon::new() {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("mDNS daemon failed: {e}");
-                break 'mdns vec![];
-            }
-        };
-        let mut receivers = Vec::new();
-        for st in service_types {
-            match daemon.browse(st) {
-                Ok(rx) => receivers.push((st, rx)),
-                Err(e) => eprintln!("browse {st} failed: {e}"),
-            }
+    let daemon = match ServiceDaemon::new() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("mDNS daemon failed: {e}");
+            return Ok(vec![]);
         }
-
-        let found: std::sync::Arc<tokio::sync::Mutex<HashMap<String, DiscoveredService>>> =
-            std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()));
-
-        let mut handles = Vec::new();
-        for (st, rx) in receivers {
-            let found = found.clone();
-            let kind = kind_for(st).to_string();
-            handles.push(tokio::spawn(async move {
-                let _ = tokio::time::timeout(window, async {
-                    while let Ok(event) = rx.recv_async().await {
-                        if let ServiceEvent::ServiceResolved(info) = event {
-                            let mut addresses: Vec<String> =
-                                info.get_addresses().iter().map(|a| a.to_string()).collect();
-                            addresses.sort_by_key(|a| usize::from(a.contains(':')));
-                            let service = DiscoveredService {
-                                kind: kind.clone(),
-                                name: info
-                                    .get_fullname()
-                                    .split('.')
-                                    .next()
-                                    .unwrap_or(info.get_fullname())
-                                    .replace('\\', ""),
-                                host: info.get_hostname().trim_end_matches('.').to_string(),
-                                port: info.get_port(),
-                                addresses,
-                            };
-                            found
-                                .lock()
-                                .await
-                                .insert(info.get_fullname().to_string(), service);
-                        }
-                    }
-                })
-                .await;
-            }));
-        }
-
-        for h in handles {
-            let _ = h.await;
-        }
-        let _ = daemon.shutdown();
-
-        let map = found.lock().await;
-        map.values().cloned().collect()
     };
-
-    if !mdns_result.is_empty() {
-        return Ok(mdns_result);
-    }
-
-    // mDNS found nothing (common in Docker where multicast is blocked).
-    // Fall back to a TCP port scan of the local /24 subnet.
-    if let Some(local_ip) = local_ipv4() {
-        let scan = subnet_scan(local_ip).await;
-        if !scan.is_empty() {
-            return Ok(scan);
+    let mut receivers = Vec::new();
+    for st in service_types {
+        match daemon.browse(st) {
+            Ok(rx) => receivers.push((st, rx)),
+            Err(e) => eprintln!("browse {st} failed: {e}"),
         }
     }
 
-    Ok(vec![])
+    let found: std::sync::Arc<tokio::sync::Mutex<HashMap<String, DiscoveredService>>> =
+        std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+
+    let mut handles = Vec::new();
+    for (st, rx) in receivers {
+        let found = found.clone();
+        let kind = kind_for(st).to_string();
+        handles.push(tokio::spawn(async move {
+            let _ = tokio::time::timeout(window, async {
+                while let Ok(event) = rx.recv_async().await {
+                    if let ServiceEvent::ServiceResolved(info) = event {
+                        let mut addresses: Vec<String> =
+                            info.get_addresses().iter().map(|a| a.to_string()).collect();
+                        addresses.sort_by_key(|a| usize::from(a.contains(':')));
+                        let service = DiscoveredService {
+                            kind: kind.clone(),
+                            name: info
+                                .get_fullname()
+                                .split('.')
+                                .next()
+                                .unwrap_or(info.get_fullname())
+                                .replace('\\', ""),
+                            host: info.get_hostname().trim_end_matches('.').to_string(),
+                            port: info.get_port(),
+                            addresses,
+                        };
+                        found
+                            .lock()
+                            .await
+                            .insert(info.get_fullname().to_string(), service);
+                    }
+                }
+            })
+            .await;
+        }));
+    }
+
+    for h in handles {
+        let _ = h.await;
+    }
+    let _ = daemon.shutdown();
+
+    let map = found.lock().await;
+    Ok(map.values().cloned().collect())
 }
 
 /// No-argument variant called by the web dispatch table (uses the default 4-second window).

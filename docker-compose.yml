@@ -36,11 +36,13 @@ services:
     #   RUST_LOG: info
     #   PRODECK_NDI_LIB: /usr/local/lib/libndi.so
 
-    # ProDeck needs to reach the LAN (ProPresenter, Avantis, OBS). Use host
-    # networking if you want mDNS/Bonjour discovery to work transparently; for
-    # container-isolated installs, bridge mode (the default) is fine and ProPr-
-    # esenter can be reached by its IP address or hostname.
-    # network_mode: host  # uncomment for mDNS discovery
+    # ProDeck needs to reach the LAN (ProPresenter, Avantis, OBS).
+    # Bridge mode (the default): ProDeck uses a TCP subnet scan to find
+    # ProPresenter — works on Docker Desktop for Mac and most Linux hosts.
+    # Host mode (Linux only): gives the container the host's real network
+    # stack so mDNS/Bonjour discovery works natively and slightly faster.
+    # Docker Desktop for Mac does NOT support true host networking.
+    # network_mode: host  # Linux only — enables native mDNS discovery
 
     # Audio: pass the ALSA sound card into the container for overflow audio
     # metering and the MP3 listen stream. Comment out if not needed.
