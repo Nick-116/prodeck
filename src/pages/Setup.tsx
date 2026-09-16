@@ -26,12 +26,7 @@ export function Setup({ onNavigate }: { onNavigate: (p: string) => void }) {
   const rows = subsystems.filter((s) => !(s.key === "cam" && s.detail === "none"));
   const greens = rows.filter((s) => s.state === "ok").length;
 
-  // Reopens the full-screen onboarding on demand (desktop only — the
-  // onboarding never mounts on web clients, so send those to Settings).
-  const rerun = () => {
-    if (IS_WEB) onNavigate("settings");
-    else requestOnboarding();
-  };
+  const rerun = () => requestOnboarding();
 
   return (
     <div className="page setup-page">
@@ -42,16 +37,14 @@ export function Setup({ onNavigate }: { onNavigate: (p: string) => void }) {
         </span>
       </header>
 
-      {!IS_WEB && (
-        <div className="call setup-intro">
-          <p>
-            ProDeck is the hub — it only shows what your other tools tell it. Each
-            row below is one connection: green means it's working, anything else
-            says exactly what to do. Nothing here is required; set up what you use
-            and ignore the rest.
-          </p>
-        </div>
-      )}
+      <div className="call setup-intro">
+        <p>
+          ProDeck is the hub — it only shows what your other tools tell it. Each
+          row below is one connection: green means it's working, anything else
+          says exactly what to do. Nothing here is required; set up what you use
+          and ignore the rest.
+        </p>
+      </div>
 
       <div className="setup-list">
         {rows.map((s) => {

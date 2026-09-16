@@ -206,7 +206,7 @@ export function FirstRunSetup({ onNavigate }: { onNavigate?: (p: string) => void
 
   // ---- gating -----------------------------------------------------------
   useEffect(() => {
-    if (IS_WEB || settings === null) return;
+    if (settings === null) return;
     if (readSetupDone()) return;
     void pcoOauthStatus()
       .then((o) => o.connected)
@@ -219,7 +219,6 @@ export function FirstRunSetup({ onNavigate }: { onNavigate?: (p: string) => void
   }, [settings === null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (IS_WEB) return;
     const reopen = () => {
       setStage("welcome");
       setOpen(true);
@@ -258,6 +257,15 @@ export function FirstRunSetup({ onNavigate }: { onNavigate?: (p: string) => void
     };
   }, [open, stage]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // In Docker/browser mode, skip the web-gateway config stage — it's always on.
+  useEffect(() => {
+    if (!IS_WEB || !open || stage !== "web") return;
+    setStage((cur) => {
+      const i = STAGES.findIndex((x) => x.id === cur);
+      return STAGES[Math.min(i + 1, STAGES.length - 1)].id;
+    });
+  }, [open, stage]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Team stage: make sure a join token exists, then render the QR.
   useEffect(() => {
     if (!open || stage !== "team") return;
@@ -265,7 +273,7 @@ export function FirstRunSetup({ onNavigate }: { onNavigate?: (p: string) => void
     (async () => {
       try {
         const s = (await getSettings()) as Settings;
-        if (!(s as any).web_enabled) {
+        if (!(s as any).web_enabled && !IS_WEB) {
           setJoinMsg("Phones & kiosks is off — turn it on in the previous step and this QR appears.");
           setJoinUrl("");
           return;
@@ -387,9 +395,11 @@ export function FirstRunSetup({ onNavigate }: { onNavigate?: (p: string) => void
   const state = {
     pro: connected,
     pco: pcoDone || !!s.pco_app_id,
-    web: webMsg.startsWith("✓") || !!s.web_enabled,
+    // In Docker the gateway is always on, so treat web as done.
+    web: IS_WEB || webMsg.startsWith("✓") || !!s.web_enabled,
     console: deskUp,
-    team: !!s.web_invite_token && !!s.web_enabled,
+    // In Docker the gateway is always on, so web_enabled isn't required.
+    team: !!s.web_invite_token && (IS_WEB || !!s.web_enabled),
     dashboards: createdRef.current > 0 || (existing?.length ?? 0) > 0,
   };
   // A stage counts as "done" (checkmark in the rail) once its thing is set.
@@ -936,7 +946,7 @@ export function FirstRunSetup({ onNavigate }: { onNavigate?: (p: string) => void
             <div className="ob-done-badge"><span>✓</span></div>
             <h1>You're set up.</h1>
             <p className="ob-lead">Here's where you landed — anything grey is one click away later.</p>
-            {keep && !(keep.installed && keep.matchesCurrent) && (
+            {!IS_WEB && keep && !(keep.installed && keep.matchesCurrent) && (
               <div className="ob-keep">
                 <div>
                   {/* Both strings come from the backend's own answer. Hardcoding
@@ -976,7 +986,7 @@ export function FirstRunSetup({ onNavigate }: { onNavigate?: (p: string) => void
                 </button>
               </div>
             )}
-            {keep && keep.installed && keep.matchesCurrent && (
+            {!IS_WEB && keep && keep.installed && keep.matchesCurrent && (
               <p className="ob-ok"><span className="ob-check">✓</span> {keep.supervises === false ? "Start at login is on." : "Keep ProDeck running is on — it starts at login and relaunches after a crash."}</p>
             )}
             <ul className="ob-summary">

@@ -76,13 +76,12 @@ RUN mkdir -p /home/prodeck/.config/ProDeck && chown -R prodeck:prodeck /home/pro
 USER prodeck
 
 # Default port; override with PRODECK_PORT env var or -e PRODECK_PORT=xxxx.
-EXPOSE 4000 4001
+EXPOSE 4000
 
 # Store ProDeck data at /data (mount a named volume or host path here).
 VOLUME ["/home/prodeck/.config/ProDeck"]
 
 ENV HOME=/home/prodeck \
-    PRODECK_PORT=4000 \
-    PRODECK_CREW_PORT=4001
+    PRODECK_PORT=4000
 
 ENTRYPOINT ["/usr/local/bin/prodeck"]

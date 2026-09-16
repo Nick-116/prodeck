@@ -143,7 +143,7 @@ function Shell() {
 
   const firstRouteDone = useRef(false);
   useEffect(() => {
-    if (IS_WEB || firstRouteDone.current || settings === null) return;
+    if (firstRouteDone.current || settings === null) return;
     firstRouteDone.current = true;
     // A Planning Center OAuth sign-in leaves no trace in settings, so ask the
     // backend before concluding this booth has never been set up.
