@@ -2125,8 +2125,10 @@ async fn dispatch(
         }
         // ---- ProPresenter connection management (admin-only)
         "pp_connect" => {
-            let host = s("host").ok_or("missing host")?;
-            let port_n = args.get("port").and_then(|v| v.as_u64()).unwrap_or(1025) as u16;
+            // Frontend sends { config: { host, port } } (Tauri command shape).
+            let cfg = args.get("config").unwrap_or(args);
+            let host = cfg.get("host").and_then(|v| v.as_str()).ok_or("missing host")?.to_string();
+            let port_n = cfg.get("port").and_then(|v| v.as_u64()).unwrap_or(1025) as u16;
             let config = crate::propresenter::ProPresenterConfig { host, port: port_n };
             let state = app.state::<crate::propresenter::ProPresenterState>();
             crate::propresenter::pp_connect(config, state, app.clone()).await
