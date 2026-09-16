@@ -3,13 +3,7 @@
 # Quick start:
 #   docker compose up -d
 #
-# Open http://localhost:4000 in any browser (use your admin password from
-# Settings → Browser Access once the app starts).
-#
-# Ports: only 4000 is exposed by default. If you want a specific LAN IP,
-# set PRODECK_HOST in a .env file:
-#   PRODECK_HOST=192.168.1.50
-# Then uncomment the ports binding below and replace "127.0.0.1" with that IP.
+# Open http://<server-ip>:4000 in any browser.
 
 services:
   prodeck:
@@ -18,9 +12,9 @@ services:
 
     restart: unless-stopped
 
-    # Change 127.0.0.1 to 0.0.0.0 or a LAN IP to expose on the network.
-    ports:
-      - "127.0.0.1:4000:4000"
+    # Host networking gives the container the real network stack so mDNS/
+    # Bonjour discovery finds ProPresenter without any manual IP entry.
+    network_mode: host
 
     # Persist settings, identity, check-in data, PCO cache, etc.
     volumes:
@@ -29,26 +23,17 @@ services:
     environment:
       PRODECK_ADMIN_PASSWORD: password
       PRODECK_PORT: 4000
-    #   PRODECK_PORT: 4000
     #   RUST_LOG: info
     #   PRODECK_NDI_LIB: /usr/local/lib/libndi.so
 
-    # ProDeck needs to reach the LAN (ProPresenter, Avantis, OBS).
-    # Bridge mode (the default): ProDeck uses a TCP subnet scan to find
-    # ProPresenter — works on Docker Desktop for Mac and most Linux hosts.
-    # Host mode (Linux only): gives the container the host's real network
-    # stack so mDNS/Bonjour discovery works natively and slightly faster.
-    # Docker Desktop for Mac does NOT support true host networking.
-    # network_mode: host  # Linux only — enables native mDNS discovery
-
-    # Audio: pass the ALSA sound card into the container for overflow audio
-    # metering and the MP3 listen stream. Comment out if not needed.
+    # Audio: pass the ALSA sound card into the container for SPL metering
+    # and the MP3 listen stream. Comment out if not using audio input.
     # devices:
     #   - /dev/snd:/dev/snd
     # group_add:
     #   - audio
 
-    # Resource limits for headless server use.
+    # Resource limits.
     deploy:
       resources:
         limits:

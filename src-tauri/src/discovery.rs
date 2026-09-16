@@ -2,6 +2,7 @@ use mdns_sd::{ServiceDaemon, ServiceEvent};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
+
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,28 +98,10 @@ async fn subnet_scan(local_ip: Ipv4Addr) -> Vec<DiscoveredService> {
     results
 }
 
-/// True when running inside a Docker container. Docker always creates this file.
-fn in_docker() -> bool {
-    std::path::Path::new("/.dockerenv").exists()
-}
-
 /// Browse the local network for ProPresenter, Stage Display and NDI services.
-/// On bare metal / Tauri: mDNS (Bonjour) finds services within seconds.
-/// In Docker on Mac: multicast never crosses the VM bridge, so we skip
-/// mDNS entirely and go straight to a TCP subnet scan. On a Linux Docker
-/// host with network_mode: host in docker-compose.yml, mDNS does work and
-/// is tried first.
+/// Uses mDNS (Bonjour) first; falls back to a TCP subnet scan if mDNS
+/// returns nothing (e.g. the network doesn't support multicast).
 pub async fn discover_services(secs: Option<u64>) -> Result<Vec<DiscoveredService>, String> {
-    // In Docker on Mac, mDNS multicast can't reach the LAN — skip it and
-    // go straight to the subnet scan so the user doesn't wait 4 seconds
-    // for a guaranteed timeout.
-    if in_docker() {
-        if let Some(local_ip) = local_ipv4() {
-            return Ok(subnet_scan(local_ip).await);
-        }
-        return Ok(vec![]);
-    }
-
     let window = Duration::from_secs(secs.unwrap_or(4));
     let service_types = [
         "_pro7prolink._tcp.local.",
