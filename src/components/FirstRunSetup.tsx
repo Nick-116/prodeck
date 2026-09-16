@@ -104,7 +104,7 @@ const TOOLS: {
     group: "Crew & cloud",
     items: [
       { name: "Crew phones", need: "opt", what: "Installable app: pages, chat, check-in, checklists." },
-      { name: "Your own domain", need: "opt", what: "Reach it anywhere, with a read-only fallback when the Mac is off." },
+      { name: "Your own domain", need: "opt", what: "Reach it anywhere, with a read-only fallback when the server is off." },
     ],
   },
 ];

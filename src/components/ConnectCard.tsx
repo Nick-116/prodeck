@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useProDeck } from "../store";
-import { discoverServices, IS_WEB, type DiscoveredService } from "../lib/tauri";
+import { discoverServices, type DiscoveredService } from "../lib/tauri";
 import { Icon } from "./Icon";
 
 export function ConnectCard() {
@@ -63,24 +63,6 @@ export function ConnectCard() {
         <button className="btn ghost" onClick={() => disconnect()}>
           Disconnect
         </button>
-      </div>
-    );
-  }
-
-  // Browsers can't drive the connection at all (pp_connect is host-only) —
-  // say that in words instead of leaking the raw dispatch error.
-  if (IS_WEB) {
-    return (
-      <div className="card connect-card">
-        <div className="card-head">
-          <h3>ProPresenter</h3>
-          <span className="chip">Not connected</span>
-        </div>
-        <p className="muted">
-          ProPresenter connects from the Mac running ProDeck, not from a
-          browser — this view is along for the ride. Once that Mac connects, the
-          live widgets here light up on their own.
-        </p>
       </div>
     );
   }
@@ -166,7 +148,7 @@ export function ConnectCard() {
             {busy ? "Connecting…" : "Connect"}
           </button>
           <p className="hint">
-            The address is on the ProPresenter Mac under Preferences → Network
+            The address is on the ProPresenter computer under Preferences → Network
             (default port 1025).
           </p>
         </>
