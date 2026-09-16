@@ -16,7 +16,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: prodeck:latest
+    image: ghcr.io/nick-116/prodeck:latest
     container_name: prodeck
 
     restart: unless-stopped
