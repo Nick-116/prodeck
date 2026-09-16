@@ -2,7 +2,6 @@ import { useAlerts } from "../alertsStore";
 import { useProDeck } from "../store";
 import { EXPLAIN } from "../components/HealthStrip";
 import { Icon } from "../components/Icon";
-import { IS_WEB } from "../lib/tauri";
 import { requestOnboarding } from "../lib/onboarding";
 
 /**
